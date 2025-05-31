@@ -1,11 +1,11 @@
 use anyhow::Result;
 use log::{info, error};
 
-use crate::interpreter::{Interpreter, Task};
+use crate::interpreter::Interpreter;
 use crate::planner::{Planner, Plan};
 use crate::executor::Executor;
 use crate::reviewer::Reviewer;
-use crate::llm_manager::{LLMManager, LLMProvider};
+use crate::llm_manager::LLMManager;
 
 /// Controls the iterative planning-action-review cycle.
 pub struct AgenticLoop<'a> {
