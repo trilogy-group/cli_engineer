@@ -1,0 +1,13 @@
+[package]
+name = "cli_engineer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1.36", features = ["full"] }
+thiserror = "1.0"
+log = "0.4"
+simplelog = "0.12"
+anyhow = "1.0"
+async-trait = "0.1"
+clap = { version = "4.5", features = ["derive"] }
