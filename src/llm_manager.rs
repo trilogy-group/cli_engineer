@@ -24,8 +24,26 @@ impl LLMProvider for LocalProvider {
     fn context_size(&self) -> usize { 4096 }
 
     async fn send_prompt(&self, prompt: &str) -> Result<String> {
-        // For now we simply echo the prompt as a placeholder.
-        Ok(format!("Echo: {}", prompt))
+        if let Some(task) = prompt.strip_prefix("Plan the following task:") {
+            let mut steps = Vec::new();
+            for (i, part) in task.split('.').enumerate() {
+                let trimmed = part.trim();
+                if !trimmed.is_empty() {
+                    steps.push(format!("{}. {}", i + 1, trimmed));
+                }
+            }
+            if steps.is_empty() {
+                Ok("1. No steps generated".to_string())
+            } else {
+                Ok(steps.join("\n"))
+            }
+        } else if let Some(step) = prompt.strip_prefix("Execute step:") {
+            Ok(format!("Executed: {}", step.trim()))
+        } else if prompt.starts_with("Review") {
+            Ok("All good".to_string())
+        } else {
+            Ok(prompt.to_string())
+        }
     }
 }
 

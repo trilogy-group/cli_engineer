@@ -1,6 +1,6 @@
 # cli_engineer
 
-A skeletal implementation of an autonomous CLI coding agent written in Rust. It demonstrates the overall architecture with pluggable LLM providers, task interpretation, planning, execution, review and an agentic loop.
+An autonomous CLI coding agent written in Rust. It features pluggable LLM providers, task interpretation, planning, execution, review and an agentic loop.
 
 ## Developer Setup
 
@@ -16,6 +16,7 @@ Run the agent directly with:
 ```bash
 cargo run -- --verbose "generate hello world"
 ```
+
 
 ## User Installation
 
