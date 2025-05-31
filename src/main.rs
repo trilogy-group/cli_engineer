@@ -31,12 +31,12 @@ struct Args {
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     logger::init(args.verbose);
-    let ui = ui::UIHandler::new(args.headless);
+    let mut ui = ui::UIHandler::new(args.headless);
     ui.start()?;
-    // In a real implementation we would configure multiple providers
     let llm_manager = LLMManager::new(vec![Box::new(LocalProvider)]);
     let agent = AgenticLoop::new(&llm_manager, 1);
     let input = args.command.join(" ");
     agent.run(&input).await?;
+    ui.finish();
     Ok(())
 }
