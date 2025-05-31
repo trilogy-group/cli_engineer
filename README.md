@@ -19,7 +19,7 @@ cargo run -- --verbose "generate hello world"
 
 ## User Installation
 
-Once published on crates.io the tool can be installed with:
+The tool can be installed from crates.io with:
 
 ```bash
 cargo install cli_engineer
