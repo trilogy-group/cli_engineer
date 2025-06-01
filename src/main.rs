@@ -163,6 +163,7 @@ async fn run_with_ui(command: String, config: Config, event_bus: Arc<EventBus>) 
     let mut artifact_manager = ArtifactManager::new(std::env::current_dir()?.join(&config.execution.artifact_dir))?;
     info!("ArtifactManager initialized.");
     artifact_manager.set_event_bus(event_bus.clone());
+    let artifact_manager = Arc::new(artifact_manager);
     
     // Initialize context manager
     let context_config = ContextConfig {
@@ -224,7 +225,7 @@ async fn run_with_ui(command: String, config: Config, event_bus: Arc<EventBus>) 
     }
     
     // Create LLM manager with providers
-    let llm_manager = Arc::new(LLMManager::new(providers, event_bus.clone()));
+    let llm_manager = Arc::new(LLMManager::new(providers, event_bus.clone(), Arc::new(config.clone())));
     info!("LLMManager initialized.");
     
     // Share LLM manager with context manager for intelligent compression
@@ -242,10 +243,18 @@ async fn run_with_ui(command: String, config: Config, event_bus: Arc<EventBus>) 
         config.execution.max_iterations,
         event_bus.clone()
     )
-    .with_context_manager(context_manager.clone());
+    .with_context_manager(context_manager.clone())
+    .with_config(Arc::new(config.clone()))
+    .with_artifact_manager(artifact_manager.clone());
     info!("AgenticLoop instance created.");
     let ctx_id = context_manager.create_context(std::collections::HashMap::new()).await;
     info!("Context created. Running agentic loop...");
+    
+    // Emit execution started event
+    event_bus.emit(Event::ExecutionStarted { 
+        environment: "agentic_loop".to_string() 
+    }).await?;
+    
     let result = agentic_loop.run(&command, &ctx_id).await;
     info!("Agentic loop completed");
     

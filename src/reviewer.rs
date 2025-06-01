@@ -2,11 +2,11 @@ use anyhow::{Result, Context};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::llm_manager::LLMProvider;
 use crate::executor::StepResult;
 use crate::planner::Plan;
 use crate::context::ContextManager;
 use crate::event_bus::{EventBus, Event};
+use crate::llm_manager::LLMManager;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviewResult {
@@ -83,6 +83,7 @@ impl Reviewer {
         }
     }
 
+    #[allow(dead_code)]
     pub fn with_context_manager(mut self, manager: Arc<ContextManager>) -> Self {
         self.context_manager = Some(manager);
         self
@@ -98,7 +99,7 @@ impl Reviewer {
         &self,
         plan: &Plan,
         results: &[StepResult],
-        llm: &dyn LLMProvider,
+        llm_manager: &LLMManager,
         context_id: &str,
     ) -> Result<ReviewResult> {
         // Emit review started event
@@ -121,7 +122,7 @@ impl Reviewer {
         }
         
         // Get review from LLM
-        let response = llm.send_prompt(&prompt).await
+        let response = llm_manager.send_prompt(&prompt).await
             .context("Failed to get review response from LLM")?;
         
         // Add response to context

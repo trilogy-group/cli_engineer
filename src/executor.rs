@@ -2,7 +2,7 @@ use anyhow::{Result, Context as AnyhowContext};
 use std::sync::Arc;
 use std::collections::HashMap;
 
-use crate::llm_manager::LLMProvider;
+use crate::llm_manager::LLMManager;
 use crate::planner::{Plan, Step, StepCategory};
 use crate::artifact::{ArtifactManager, ArtifactType};
 use crate::context::ContextManager;
@@ -43,6 +43,7 @@ impl Executor {
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_context_manager(mut self, manager: Arc<ContextManager>) -> Self {
         self.context_manager = Some(manager);
         self
@@ -54,7 +55,7 @@ impl Executor {
     }
 
     /// Execute the entire plan and return results for each step
-    pub async fn execute(&self, plan: &Plan, llm: &dyn LLMProvider, context_id: &str) -> Result<Vec<StepResult>> {
+    pub async fn execute(&self, plan: &Plan, llm_manager: &LLMManager, context_id: &str) -> Result<Vec<StepResult>> {
         let mut results = Vec::new();
         
         // Emit plan execution started event
@@ -84,7 +85,7 @@ impl Executor {
             }
             
             // Execute the step
-            let result = self.execute_step(step, llm, context_id, index + 1, plan.steps.len()).await
+            let result = self.execute_step(step, llm_manager, context_id, index + 1, plan.steps.len()).await
                 .context(format!("Failed to execute step: {}", step.description))?;
             
             // Emit step completed event
@@ -106,7 +107,7 @@ impl Executor {
     async fn execute_step(
         &self,
         step: &Step,
-        llm: &dyn LLMProvider,
+        llm_manager: &LLMManager,
         context_id: &str,
         step_num: usize,
         total_steps: usize,
@@ -128,7 +129,7 @@ impl Executor {
         // Execute with the LLM
         let start_tokens = self.get_context_tokens(context_id).await;
         info!("Sending prompt to LLM for step {}", step_num);
-        let response = llm.send_prompt(&prompt).await
+        let response = llm_manager.send_prompt(&prompt).await
             .context("Failed to get response from LLM")?;
         info!("Received response from LLM for step {}", step_num);
         let end_tokens = self.get_context_tokens(context_id).await;
@@ -150,7 +151,9 @@ impl Executor {
         
         // Handle category-specific post-processing
         match step.category {
-            StepCategory::FileOperation | StepCategory::CodeGeneration | StepCategory::CodeModification => {
+            StepCategory::FileOperation | StepCategory::CodeGeneration | 
+            StepCategory::CodeModification | StepCategory::Testing | 
+            StepCategory::Documentation => {
                 // Try to extract and save code artifacts
                 if let Some(artifact_mgr) = &self.artifact_manager {
                     let artifacts = self.extract_code_artifacts(&response).await;

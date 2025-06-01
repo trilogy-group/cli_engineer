@@ -10,6 +10,7 @@ use crate::llm_manager::LLMManager;
 use crate::event_bus::{EventBus, Event};
 use crate::artifact::ArtifactManager;
 use crate::context::ContextManager;
+use crate::config::Config;
 
 /// Controls the iterative planning-action-review cycle
 pub struct AgenticLoop {
@@ -22,6 +23,7 @@ pub struct AgenticLoop {
     event_bus: Arc<EventBus>,
     artifact_manager: Option<Arc<ArtifactManager>>,
     context_manager: Option<Arc<ContextManager>>,
+    config: Option<Arc<Config>>,
 }
 
 impl AgenticLoop {
@@ -40,6 +42,7 @@ impl AgenticLoop {
             event_bus,
             artifact_manager: None,
             context_manager: None,
+            config: None,
         }
     }
 
@@ -50,10 +53,14 @@ impl AgenticLoop {
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_context_manager(mut self, manager: Arc<ContextManager>) -> Self {
-        self.executor = self.executor.with_context_manager(manager.clone());
-        self.reviewer = self.reviewer.with_context_manager(manager.clone());
         self.context_manager = Some(manager);
+        self
+    }
+    
+    pub fn with_config(mut self, config: Arc<Config>) -> Self {
+        self.config = Some(config);
         self
     }
 
@@ -81,7 +88,6 @@ impl AgenticLoop {
             ).await?;
         }
         
-        let provider = self.llm_manager.provider();
         let mut iteration = 0;
         let mut _last_review: Option<ReviewResult> = None;
         
@@ -100,7 +106,7 @@ impl AgenticLoop {
             
             // Plan the task
             info!("Creating plan for task...");
-            let plan = match self.planner.plan(&task, &*provider).await {
+            let plan = match self.planner.plan(&task, &*self.llm_manager, self.config.as_deref()).await {
                 Ok(p) => p,
                 Err(e) => {
                     error!("Planning failed: {}", e);
@@ -114,7 +120,7 @@ impl AgenticLoop {
             
             // Execute the plan
             info!("Executing plan...");
-            let results = match self.executor.execute(&plan, &*provider, context_id).await {
+            let results = match self.executor.execute(&plan, &self.llm_manager, context_id).await {
                 Ok(r) => r,
                 Err(e) => {
                     error!("Execution failed: {}", e);
@@ -129,7 +135,7 @@ impl AgenticLoop {
             
             // Review the results
             info!("Reviewing execution results...");
-            let review = match self.reviewer.review(&plan, &results, &*provider, context_id).await {
+            let review = match self.reviewer.review(&plan, &results, &*self.llm_manager, context_id).await {
                 Ok(r) => r,
                 Err(e) => {
                     error!("Review failed: {}", e);

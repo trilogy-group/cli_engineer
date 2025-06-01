@@ -55,7 +55,7 @@ impl DashboardUI {
             total_cost: Arc::new(Mutex::new(0.0)),
             context_usage: Arc::new(Mutex::new(0.0)),
             last_update: Instant::now(),
-            log_lines: Arc::new(Mutex::new(VecDeque::with_capacity(8))),
+            log_lines: Arc::new(Mutex::new(VecDeque::with_capacity(30))),
         }
     }
     
@@ -83,7 +83,7 @@ impl DashboardUI {
             let tasks_completed = self.tasks_completed.clone();
             let tasks_total = self.tasks_total.clone();
             let total_cost = self.total_cost.clone();
-            let _context_usage = self.context_usage.clone();
+            let context_usage = self.context_usage.clone();
             
             tokio::spawn(async move {
                 let mut event_receiver = receiver;
@@ -99,7 +99,7 @@ impl DashboardUI {
                                 _ => format!("[{}] {}", level, message),
                             };
                             let mut logs = log_lines.lock().unwrap();
-                            if logs.len() >= 8 { logs.pop_front(); }
+                            if logs.len() >= 30 { logs.pop_front(); }
                             logs.push_back(colored.clone());
                         }
                         Event::TaskStarted { description, .. } => {
@@ -120,12 +120,15 @@ impl DashboardUI {
                             *api_calls.lock().unwrap() += 1;
                             *current_status.lock().unwrap() = format!("Calling {}/{}", provider, model);
                         }
-                        Event::APICallCompleted { tokens, .. } => {
-                            *total_cost.lock().unwrap() += tokens as f64;
+                        Event::APICallCompleted { cost, .. } => {
+                            *total_cost.lock().unwrap() += cost as f64;
                             *current_status.lock().unwrap() = "API response received".to_string();
                         }
                         Event::ArtifactCreated { .. } => {
                             *artifacts_created.lock().unwrap() += 1;
+                        }
+                        Event::ContextUsageChanged { usage_percentage, .. } => {
+                            *context_usage.lock().unwrap() = usage_percentage;
                         }
                         _ => {}
                     }
@@ -155,11 +158,11 @@ impl DashboardUI {
             "Task completed".bright_white().bold(),
             elapsed.as_secs_f32()
         );
-        println!("  {} iterations | {} API calls | {} artifacts | {} tokens",
+        println!("  {} iterations | {} API calls | {} artifacts | ${:.3} cost",
             self.tasks_total.lock().unwrap().to_string().cyan(),
             self.api_calls.lock().unwrap().to_string().yellow(),
             self.artifacts_created.lock().unwrap().to_string().green(),
-            self.total_cost.lock().unwrap().to_string().magenta()
+            format!("{:.3}", self.total_cost.lock().unwrap()).magenta()
         );
         
         Ok(())
@@ -217,11 +220,11 @@ impl DashboardUI {
         let right_padding = 32; // Fixed right padding to ensure proper alignment
         let left_padding = total_padding.saturating_sub(right_padding);
         
-        print!("{} {}{} ", "║".bright_blue(), phase_label.bright_white(), phase_text.cyan());
-        print!("{}", " ".repeat(left_padding));
+        print!("{}{}{}", "║".bright_blue(), phase_label.bright_white(), phase_text.cyan());
+        print!(" {}", " ".repeat(left_padding));
         print!("{}", progress_bar_str);
         print!("{}", " ".repeat(right_padding));
-        println!("{}", "║".bright_blue());
+        println!("{}", " ║".bright_blue());
         io::stdout().flush()?;
         
         // Current Task
@@ -274,7 +277,6 @@ impl DashboardUI {
         println!("{}", "╠══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╣".bright_blue());
         
         // Metrics - build the complete metrics line first
-        let mut metrics_line = String::new();
         let api_calls = if let Ok(guard) = self.api_calls.try_lock() { *guard } else { 0 };
         let artifacts = if let Ok(guard) = self.artifacts_created.try_lock() { *guard } else { 0 };
         let tasks_completed = if let Ok(guard) = self.tasks_completed.try_lock() { *guard } else { 0 };
@@ -282,23 +284,29 @@ impl DashboardUI {
         let total_cost = if let Ok(guard) = self.total_cost.try_lock() { *guard } else { 0.0 };
         let context_usage = if let Ok(guard) = self.context_usage.try_lock() { *guard } else { 0.0 };
         
-        // Enhanced metrics format: " 📊 Tasks: 0/0 | 🤖 API Calls: 0 | 💰 Cost: $0.0000 | 📝 Artifacts: 0 | 💾 Context: 0%               "
-        metrics_line.push_str(&format!(" 📊 Tasks: {}/{} | 🤖 API Calls: {} | 💰 Cost: ${:.4} | 📝 Artifacts: {} | 💾 Context: {:.0}% ", 
-            tasks_completed, tasks_total, api_calls, total_cost, artifacts, context_usage));
+        let formatted_cost = format!("{:.3}", total_cost);
+        let formatted_tasks = format!("{}/{}", tasks_completed, tasks_total);
+        let formatted_api_calls = api_calls.to_string();
+        let formatted_artifacts = artifacts.to_string();
+        let formatted_context = format!("{:.1}", context_usage);
         
-        let metrics_padding = CONTENT_WIDTH.saturating_sub(metrics_line.len());
-        let left_pad = metrics_padding / 2;
-        let right_pad = metrics_padding + 14 - left_pad;
+        // Calculate the actual content length that will be printed - EXACTLY as printed
+        let actual_content = format!("📊 Tasks: {} | 🤖 API Calls: {} | 💰 Cost: ${} | 📝 Artifacts: {} | 💾 Context: {}%", 
+            formatted_tasks, formatted_api_calls, formatted_cost, formatted_artifacts, formatted_context);
+        // Account for emoji display width (emojis take more visual space than character count)
+        let emoji_display_adjustment = 10; // Based on debug output showing 10 missing spaces
+        let metrics_padding = CONTENT_WIDTH.saturating_sub(actual_content.len() + 1 - emoji_display_adjustment);
         
-        print!("{} {}", "║".bright_blue(), " ".repeat(left_pad));
-        print!(" 📊 Tasks: {} | 🤖 API Calls: {} | 💰 Cost: ${:.4} | 📝 Artifacts: {} | 💾 Context: {:.0}% ", 
-            format!("{}/{}", tasks_completed, tasks_total).cyan(),
-            api_calls.to_string().yellow(),
-            total_cost.to_string().green(),
-            artifacts.to_string().green(), 
-            context_usage);
-        print!("{}", " ".repeat(right_pad));
+        print!("{} ", "║".bright_blue());
+        print!("📊 Tasks: {} | 🤖 API Calls: {} | 💰 Cost: ${} | 📝 Artifacts: {} | 💾 Context: {}%", 
+            formatted_tasks.cyan(),
+            formatted_api_calls.yellow(),
+            formatted_cost.green(),
+            formatted_artifacts.green(), 
+            formatted_context);
+        print!("{}", " ".repeat(metrics_padding));
         println!("{}", "║".bright_blue());
+        println!("{}", "╠══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╣".bright_blue());
         io::stdout().flush()?;
         
         // Log area
@@ -312,8 +320,12 @@ impl DashboardUI {
             let max_log_len = CONTENT_WIDTH.saturating_sub(1); // Leave 1 space for right border
             let visible_log = strip_ansi_codes(log_line);
             let truncated_log = if visible_log.len() > max_log_len {
-                let end_idx = visible_log.len().min(max_log_len.saturating_sub(3));
-                format!("{}...", &visible_log[..end_idx])
+                // Use char_indices to find safe character boundaries
+                let truncate_at = visible_log.char_indices()
+                    .nth(max_log_len.saturating_sub(3))
+                    .map(|(i, _)| i)
+                    .unwrap_or(visible_log.len());
+                format!("{}...", &visible_log[..truncate_at])
             } else {
                 log_line.clone()
             };
@@ -325,7 +337,7 @@ impl DashboardUI {
         }
         
         // Add blank lines to fill up the log area if needed
-        let total_log_lines: usize = 8;
+        let total_log_lines: usize = 30;
         let blank_lines = total_log_lines.saturating_sub(log_lines.len());
         for _ in 0..blank_lines {
             let log_padding = CONTENT_WIDTH - 1; // Leave 1 space for the content, not 2
@@ -414,7 +426,7 @@ impl DashboardUI {
                     _ => format!("[{}] {}", level, message),
                 };
                 let mut logs = self.log_lines.lock().unwrap();
-                if logs.len() >= 8 { logs.pop_front(); }
+                if logs.len() >= 30 { logs.pop_front(); }
                 logs.push_back(colored.clone());
             }
             Event::TaskStarted { description, .. } => {
@@ -435,12 +447,15 @@ impl DashboardUI {
                 *self.api_calls.lock().unwrap() += 1;
                 self.update_status(&format!("Calling {}/{}", provider, model))?;
             }
-            Event::APICallCompleted { tokens, .. } => {
-                *self.total_cost.lock().unwrap() += tokens as f64;
+            Event::APICallCompleted { cost, .. } => {
+                *self.total_cost.lock().unwrap() += cost as f64;
                 self.update_status("API response received")?;
             }
             Event::ArtifactCreated { .. } => {
                 *self.artifacts_created.lock().unwrap() += 1;
+            }
+            Event::ContextUsageChanged { usage_percentage, .. } => {
+                *self.context_usage.lock().unwrap() = usage_percentage;
             }
             _ => {}
         }

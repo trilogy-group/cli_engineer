@@ -6,23 +6,32 @@
 # - ANTHROPIC_API_KEY for Anthropic
 
 [ai_providers.openai]
-enabled = false
-model = "o4-mini"
+enabled = true
+model = "gpt-4.1"
 temperature = 1
+cost_per_1m_input_tokens = 2.000
+cost_per_1m_output_tokens = 8.000
+max_context_tokens = 1047576
 
 [ai_providers.anthropic]
 enabled = false
 model = "claude-sonnet-4-0"
 temperature = 1
+cost_per_1m_input_tokens = 3.00
+cost_per_1m_output_tokens = 15.00
+max_context_tokens = 200000
 
 [ai_providers.openrouter]
-enabled = true
+enabled = false
 model = "deepseek/deepseek-r1-0528-qwen3-8b"
 temperature = 0.2
+cost_per_1m_input_tokens = 0.06
+cost_per_1m_output_tokens = 0.09
+max_context_tokens = 65536
 
 [execution]
 # Maximum iterations for the agentic loop
-max_iterations = 10
+max_iterations = 2
 
 # Enable parallel task execution
 parallel_enabled = true
@@ -35,6 +44,9 @@ isolated_execution = false
 
 # Cleanup artifacts on exit
 cleanup_on_exit = false
+
+# Disable automatic git repository initialization unless explicitly requested
+disable_auto_git = true
 
 [ui]
 # Enable colorful terminal output
@@ -50,11 +62,11 @@ metrics = true
 output_format = "terminal"
 
 [context]
-# Maximum tokens for context
-max_tokens = 100000
+# Fallback maximum tokens (actual model context size is used when available)
+max_tokens = 65536
 
 # Compression threshold (0.0 to 1.0)
-compression_threshold = 0.8
+compression_threshold = 0.4
 
 # Enable context caching
 cache_enabled = true

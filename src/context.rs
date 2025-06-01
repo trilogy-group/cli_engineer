@@ -152,7 +152,13 @@ impl ContextManager {
             context.updated_at = chrono::Utc::now();
             
             // Check if we need compression
-            let usage_ratio = context.total_tokens as f32 / self.config.max_tokens as f32;
+            let max_tokens = if let Some(llm_manager) = &self.llm_manager {
+                llm_manager.get_context_size()
+            } else {
+                self.config.max_tokens // Fallback to config if no LLM manager
+            };
+            
+            let usage_ratio = context.total_tokens as f32 / max_tokens as f32;
             if usage_ratio > self.config.compression_threshold {
                 drop(contexts);
                 self.compress_context(context_id).await?;
@@ -399,7 +405,13 @@ impl ContextManager {
         let contexts = self.contexts.read().await;
         
         if let Some(context) = contexts.get(context_id) {
-            let usage_ratio = context.total_tokens as f32 / self.config.max_tokens as f32;
+            let max_tokens = if let Some(llm_manager) = &self.llm_manager {
+                llm_manager.get_context_size()
+            } else {
+                self.config.max_tokens // Fallback to config if no LLM manager
+            };
+            
+            let usage_ratio = context.total_tokens as f32 / max_tokens as f32;
             Ok((context.total_tokens, usage_ratio * 100.0))
         } else {
             anyhow::bail!("Context not found: {}", context_id)

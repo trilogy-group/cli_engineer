@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::interpreter::Task;
-use crate::llm_manager::LLMProvider;
+use crate::llm_manager::LLMManager;
+use crate::config::Config;
 
 /// Represents a structured plan with categorized steps
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,9 +57,9 @@ impl Planner {
     }
 
     /// Create a structured plan for the given task using the provided LLM
-    pub async fn plan(&self, task: &Task, llm: &dyn LLMProvider) -> Result<Plan> {
-        let prompt = self.build_planning_prompt(task);
-        let response = llm.send_prompt(&prompt).await
+    pub async fn plan(&self, task: &Task, llm_manager: &LLMManager, config: Option<&Config>) -> Result<Plan> {
+        let prompt = self.build_planning_prompt(task, config);
+        let response = llm_manager.send_prompt(&prompt).await
             .context("Failed to get planning response from LLM")?;
         
         // Parse the response into a structured plan
@@ -66,15 +67,24 @@ impl Planner {
             .context("Failed to parse plan from LLM response")
     }
 
-    fn build_planning_prompt(&self, task: &Task) -> String {
-        format!(
+    fn build_planning_prompt(&self, task: &Task, config: Option<&Config>) -> String {
+        let mut prompt = format!(
             "{}\n\nTask Description: {}\nGoal: {}\nContext: {}\nConstraints: {:?}",
             self.planning_prompt_template,
             task.description,
             task.goal,
             task.context,
             task.constraints
-        )
+        );
+        
+        // Add git-related instructions if disable_auto_git is enabled
+        if let Some(cfg) = config {
+            if cfg.execution.disable_auto_git {
+                prompt.push_str("\n\nIMPORTANT: Do NOT include git repository initialization (git init) or git-related setup steps unless explicitly requested in the task description. Focus only on the core functionality requested.");
+            }
+        }
+        
+        prompt
     }
 
     fn parse_plan_response(&self, response: &str, task: &Task) -> Result<Plan> {

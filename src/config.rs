@@ -41,6 +41,15 @@ pub struct ProviderConfig {
     
     /// Temperature setting
     pub temperature: Option<f32>,
+    
+    /// Cost per 1M input tokens (in USD)
+    pub cost_per_1m_input_tokens: Option<f32>,
+    
+    /// Cost per 1M output tokens (in USD)
+    pub cost_per_1m_output_tokens: Option<f32>,
+    
+    /// Maximum context size in tokens
+    pub max_context_tokens: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,6 +73,10 @@ pub struct ExecutionConfig {
     /// Clean up artifacts on exit
     #[serde(default = "default_cleanup_on_exit")]
     pub cleanup_on_exit: bool,
+    
+    /// Disable automatic git repository initialization unless explicitly requested
+    #[serde(default = "default_disable_auto_git")]
+    pub disable_auto_git: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,7 +100,7 @@ pub struct UIConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextConfig {
-    /// Maximum tokens for context
+    /// Fallback maximum tokens for context (only used if LLM manager unavailable)
     #[serde(default = "default_max_tokens")]
     pub max_tokens: usize,
     
@@ -113,6 +126,7 @@ fn default_output_format() -> String { "terminal".to_string() }
 fn default_max_tokens() -> usize { 100_000 }
 fn default_compression_threshold() -> f32 { 0.8 }
 fn default_cache_enabled() -> bool { true }
+fn default_disable_auto_git() -> bool { false }
 
 impl Default for Config {
     fn default() -> Self {
@@ -122,16 +136,25 @@ impl Default for Config {
                     enabled: true,
                     model: "o4-mini".to_string(),
                     temperature: Some(0.7),
+                    cost_per_1m_input_tokens: None,
+                    cost_per_1m_output_tokens: None,
+                    max_context_tokens: None,
                 }),
                 anthropic: Some(ProviderConfig {
                     enabled: false,
                     model: "claude-sonnet-4-0".to_string(),
                     temperature: Some(0.7),
+                    cost_per_1m_input_tokens: None,
+                    cost_per_1m_output_tokens: None,
+                    max_context_tokens: None,
                 }),
                 openrouter: Some(ProviderConfig {
                     enabled: false,
                     model: "deepseek/deepseek-r1-0528-qwen3-8b".to_string(),
                     temperature: Some(0.2),
+                    cost_per_1m_input_tokens: None,
+                    cost_per_1m_output_tokens: None,
+                    max_context_tokens: None,
                 }),
             },
             execution: ExecutionConfig {
@@ -140,6 +163,7 @@ impl Default for Config {
                 artifact_dir: default_artifact_dir(),
                 isolated_execution: default_isolated_execution(),
                 cleanup_on_exit: default_cleanup_on_exit(),
+                disable_auto_git: default_disable_auto_git(),
             },
             ui: UIConfig {
                 colorful: default_colorful(),
