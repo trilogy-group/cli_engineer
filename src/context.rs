@@ -119,7 +119,7 @@ impl ContextManager {
         
         // Emit event
         if let Some(bus) = &self.event_bus {
-            bus.emit(Event::ContextCreated {
+            let _ = bus.emit(Event::ContextCreated {
                 id: id.clone(),
             }).await;
         }
@@ -159,7 +159,7 @@ impl ContextManager {
             } else {
                 // Emit usage event
                 if let Some(bus) = &self.event_bus {
-                    bus.emit(Event::ContextUsageChanged {
+                    let _ = bus.emit(Event::ContextUsageChanged {
                         id: context_id.to_string(),
                         usage_percentage: usage_ratio * 100.0,
                         total_tokens: context.total_tokens,
@@ -418,7 +418,7 @@ impl ContextManager {
             
             // Emit event
             if let Some(bus) = &self.event_bus {
-                bus.emit(Event::ContextCleared {
+                let _ = bus.emit(Event::ContextCleared {
                     id: context_id.to_string(),
                 }).await;
             }

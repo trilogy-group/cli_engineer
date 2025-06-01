@@ -136,17 +136,6 @@ impl DashboardUI {
         Ok(())
     }
     
-    pub fn process_events(&mut self) -> Result<()> {
-        if let Some(event_bus) = &self.event_bus {
-            let mut receiver = event_bus.subscribe();
-            // Try to receive events without blocking
-            while let Ok(event) = receiver.try_recv() {
-                self.handle_event(event)?;
-            }
-        }
-        Ok(())
-    }
-    
     pub fn finish(&mut self) -> Result<()> {
         if self.headless {
             return Ok(());
