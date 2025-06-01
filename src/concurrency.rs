@@ -2,6 +2,7 @@ use anyhow::Result;
 use tokio::task::JoinHandle;
 
 /// Runs tasks concurrently using tokio.
+#[allow(dead_code)]
 pub async fn run_parallel<T, F>(futs: Vec<F>) -> Result<Vec<T>>
 where
     F: std::future::Future<Output = Result<T>> + Send + 'static,

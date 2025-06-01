@@ -1,0 +1,60 @@
+# CLI Engineer Configuration File
+# 
+# API keys are stored in environment variables:
+# - OPENROUTER_API_KEY for OpenRouter
+# - OPENAI_API_KEY for OpenAI  
+# - ANTHROPIC_API_KEY for Anthropic
+
+[ai_providers.openai]
+enabled = false
+model = "o4-mini"
+temperature = 1
+
+[ai_providers.anthropic]
+enabled = false
+model = "claude-sonnet-4-0"
+temperature = 1
+
+[ai_providers.openrouter]
+enabled = true
+model = "deepseek/deepseek-r1-0528-qwen3-8b"
+temperature = 0.2
+
+[execution]
+# Maximum iterations for the agentic loop
+max_iterations = 10
+
+# Enable parallel task execution
+parallel_enabled = true
+
+# Artifact directory
+artifact_dir = "./artifacts"
+
+# Isolated execution environment
+isolated_execution = false
+
+# Cleanup artifacts on exit
+cleanup_on_exit = false
+
+[ui]
+# Enable colorful terminal output
+colorful = true
+
+# Show progress bars
+progress_bars = true
+
+# Show real-time metrics
+metrics = true
+
+# Output format: "terminal", "json", or "plain"
+output_format = "terminal"
+
+[context]
+# Maximum tokens for context
+max_tokens = 100000
+
+# Compression threshold (0.0 to 1.0)
+compression_threshold = 0.8
+
+# Enable context caching
+cache_enabled = true
