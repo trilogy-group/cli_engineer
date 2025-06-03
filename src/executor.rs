@@ -7,7 +7,7 @@ use crate::planner::{Plan, Step, StepCategory};
 use crate::artifact::{ArtifactManager, ArtifactType};
 use crate::context::ContextManager;
 use crate::event_bus::{EventBus, Event};
-use log::info;
+use log::{info, warn};
 
 /// Result of executing a single step
 #[derive(Debug, Clone)]
@@ -26,14 +26,16 @@ pub struct Executor {
     artifact_manager: Option<Arc<ArtifactManager>>,
     context_manager: Option<Arc<ContextManager>>,
     event_bus: Option<Arc<EventBus>>,
+    llm_manager: Arc<LLMManager>,
 }
 
 impl Executor {
-    pub fn new() -> Self {
+    pub fn new(llm_manager: Arc<LLMManager>) -> Self {
         Self {
             artifact_manager: None,
             context_manager: None,
             event_bus: None,
+            llm_manager,
         }
     }
 
@@ -55,7 +57,7 @@ impl Executor {
     }
 
     /// Execute the entire plan and return results for each step
-    pub async fn execute(&self, plan: &Plan, llm_manager: &LLMManager, context_id: &str) -> Result<Vec<StepResult>> {
+    pub async fn execute(&self, plan: &Plan, context_id: &str) -> Result<Vec<StepResult>> {
         let mut results = Vec::new();
         
         // Emit plan execution started event
@@ -85,7 +87,7 @@ impl Executor {
             }
             
             // Execute the step
-            let result = self.execute_step(step, llm_manager, context_id, index + 1, plan.steps.len()).await
+            let result = self.execute_step(step, context_id, index + 1, plan.steps.len()).await
                 .context(format!("Failed to execute step: {}", step.description))?;
             
             // Emit step completed event
@@ -107,7 +109,6 @@ impl Executor {
     async fn execute_step(
         &self,
         step: &Step,
-        llm_manager: &LLMManager,
         context_id: &str,
         step_num: usize,
         total_steps: usize,
@@ -126,13 +127,20 @@ impl Executor {
             ).await?;
         }
         
-        // Execute with the LLM
-        let start_tokens = self.get_context_tokens(context_id).await;
-        info!("Sending prompt to LLM for step {}", step_num);
-        let response = llm_manager.send_prompt(&prompt).await
-            .context("Failed to get response from LLM")?;
+        // Send to LLM
+        let response = self.llm_manager.send_prompt(&prompt).await?;
+        
         info!("Received response from LLM for step {}", step_num);
-        let end_tokens = self.get_context_tokens(context_id).await;
+        
+        // Debug: log the response for CodeModification steps
+        if matches!(step.category, StepCategory::CodeModification) {
+            let preview = if response.len() > 200 {
+                format!("{}...", &response[..200])
+            } else {
+                response.clone()
+            };
+            info!("CodeModification response preview: {}", preview);
+        }
         
         // Add response to context
         if let Some(ctx_mgr) = &self.context_manager {
@@ -145,7 +153,7 @@ impl Executor {
             success: true,
             output: response.clone(),
             artifacts_created: Vec::new(),
-            tokens_used: end_tokens.saturating_sub(start_tokens),
+            tokens_used: 0,
             error: None,
         };
         
@@ -156,7 +164,7 @@ impl Executor {
             StepCategory::Documentation => {
                 // Try to extract and save code artifacts
                 if let Some(artifact_mgr) = &self.artifact_manager {
-                    let artifacts = self.extract_code_artifacts(&response).await;
+                    let artifacts = self.extract_code_artifacts(&response, &step.description, &step.category).await?;
                     for (filename, content) in artifacts {
                         let extension = filename.split('.').last();
                         let artifact_type = match extension {
@@ -210,13 +218,37 @@ impl Executor {
                 "Generate the requested code. When providing code, use markdown code blocks with the filename after the language identifier (e.g., ```python hello.py). Provide COMPLETE, working code:"
             }
             StepCategory::CodeModification => {
-                "Modify the existing code as requested. When providing code, use markdown code blocks with the filename after the language identifier. Show the COMPLETE updated code:"
+                "Modify the existing code as requested. 
+
+YOU MUST use diff format. Here's EXACTLY what to output:
+
+```diff
+--- filename.ext
++++ filename.ext
+@@ -5,3 +5,4 @@
+ def hello():
+-    print('Hello')
++    print('Hello, World!')
++    return True
+```
+
+RULES:
+1. ALWAYS start with ```diff (NO filename after diff)
+2. Use --- filename.ext and +++ filename.ext headers
+3. Use @@ -old_line,old_count +new_line,new_count @@
+4. Lines starting with - are removed
+5. Lines starting with + are added
+6. Lines starting with space are unchanged context
+7. DO NOT include the entire file
+8. ONLY show the lines that change plus 2-3 context lines
+
+The step requests: "
             }
             StepCategory::Testing => {
-                "Create or run tests for the functionality. When providing test code, use markdown code blocks with the filename after the language identifier (e.g., ```python test_hello.py). Provide test code and expected results:"
+                "Create tests for the functionality (DO NOT execute them, just create the test code). When providing test code, use markdown code blocks with the filename after the language identifier (e.g., ```python test_hello.py). Provide test code only:"
             }
             StepCategory::Documentation => {
-                "Create or update documentation. When providing documentation files, use markdown code blocks with the filename after the language identifier (e.g., ```markdown README.md). Provide the documentation content:"
+                "Create or update documentation. CRITICAL: If adding comments/docstrings to existing code, use 'Code Modification' format with diff blocks instead of creating new files. Only create separate documentation files (like README.md) if explicitly requested. Focus on the specific task at hand - do not create unrelated documentation or example files:"
             }
             StepCategory::Research => {
                 "Research the following topic and provide findings:"
@@ -230,29 +262,67 @@ impl Executor {
             StepCategory::FileOperation | StepCategory::CodeGeneration | 
             StepCategory::CodeModification | StepCategory::Testing | 
             StepCategory::Documentation => {
-                "\n\nIMPORTANT: When creating files, use this exact format:\n```language filename.ext\nfile content here\n```\n\nFor example:\n```python hello_world.py\ndef main():\n    print(\"Hello, World!\")\n```"
+                "\n\nIMPORTANT FILE CREATION RULES:
+1. YOU MUST ALWAYS include the filename after the language in code blocks
+2. Use this EXACT format:
+   ```language filename.ext
+   file content here
+   ```
+
+3. Examples of CORRECT format:
+   ```python fizzbuzz.py
+     def fizzbuzz(n):
+         # implementation
+   ```
+
+   ```python requirements.txt
+     flask==2.0.1
+     requests==2.28.0
+   ```
+
+   ```markdown README.md
+     # Project Title
+     Description here
+   ```
+
+4. NEVER use generic names like 'file_1.py' or 'script.py'
+5. Use descriptive filenames that match the functionality
+6. If implementing tests, use test_<feature>.py format
+
+7. DO NOT include:
+   - Shell commands in code blocks (explain how to run in text)
+   - Reasoning or explanations in code blocks
+   - Files from unrelated tasks
+   - Example or placeholder code (unless specifically requested)
+   - Test execution commands (like 'pytest test.py' or 'python script.py')
+
+8. CRITICAL: Only generate code directly related to THIS SPECIFIC task:
+   - DO NOT add unrelated test files or examples
+   - DO NOT create files for tasks not mentioned in the step description
+   - If asked for FizzBuzz, DO NOT create factorial or other unrelated code
+   - Stay focused ONLY on what is explicitly requested
+   - DO NOT create utility functions unless they are specifically needed for this task
+   - DO NOT add bonus features or demonstrate other algorithms
+
+9. CONTEXT AWARENESS:
+   - If the step mentions specific files, ONLY work with those files
+   - If the step says 'add comment to file X', modify file X, don't create new files
+   - If no specific file is mentioned, ask yourself: what file would logically need this change?
+   - When in doubt, create minimal, focused code that directly addresses the step description
+
+FAILURE TO INCLUDE PROPER FILENAMES WILL RESULT IN GENERIC NAMES LIKE 'file_1.py'"
             }
             _ => ""
         };
         
         format!(
-            "Step {}/{}: {}\n\n{}{}\n\nTask: {}",
+            "Step {}/{}: {}\n\n{}{}\n\nExecute this step precisely. Focus only on what is requested above.",
             step_num,
             total_steps,
             step.description,
             category_context,
-            format_instructions,
-            step.description
+            format_instructions
         )
-    }
-
-    async fn get_context_tokens(&self, context_id: &str) -> usize {
-        if let Some(ctx_mgr) = &self.context_manager {
-            if let Ok((tokens, _)) = ctx_mgr.get_usage(context_id).await {
-                return tokens;
-            }
-        }
-        0
     }
 
     fn dependencies_met(&self, _step_id: &str, _dependencies: &std::collections::HashMap<String, Vec<String>>, _completed: &[StepResult]) -> bool {
@@ -261,7 +331,136 @@ impl Executor {
         true
     }
 
-    async fn extract_code_artifacts(&self, response: &str) -> Vec<(String, String)> {
+    async fn apply_diff_patch(&self, filename: &str, diff_content: &str) -> Result<()> {
+        if let Some(artifact_mgr) = &self.artifact_manager {
+            // Try to find the existing artifact
+            let artifacts = artifact_mgr.list_artifacts().await;
+            let existing_artifact = artifacts.iter()
+                .find(|a| a.name == filename || a.path.file_name().map(|f| f.to_string_lossy()) == Some(filename.into()));
+            
+            let existing_content = if let Some(artifact) = existing_artifact {
+                // Read the file content from disk if not in memory
+                if let Some(content) = &artifact.content {
+                    content.clone()
+                } else {
+                    std::fs::read_to_string(&artifact.path)
+                        .unwrap_or_else(|_| {
+                            warn!("Could not read file {}", artifact.path.display());
+                            String::new()
+                        })
+                }
+            } else {
+                warn!("File {} doesn't exist for modification, creating new file", filename);
+                String::new()
+            };
+            
+            // Apply the diff to get the new content
+            let new_content = Self::apply_unified_diff(&existing_content, diff_content)?;
+            
+            // Determine the artifact type based on extension
+            let extension = filename.split('.').last();
+            let artifact_type = match extension {
+                Some("rs") => ArtifactType::SourceCode,
+                Some("py") => ArtifactType::SourceCode,
+                Some("js") | Some("ts") => ArtifactType::SourceCode,
+                Some("toml") | Some("yaml") | Some("yml") => ArtifactType::Configuration,
+                Some("md") => ArtifactType::Documentation,
+                _ => ArtifactType::Other("modified".to_string()),
+            };
+            
+            // Create metadata
+            let mut metadata = HashMap::new();
+            metadata.insert("description".to_string(), format!("Modified via diff patch"));
+            metadata.insert("modified_by".to_string(), "diff_patch".to_string());
+            
+            // Update or create the artifact
+            if existing_artifact.is_some() {
+                // Update existing artifact
+                artifact_mgr.update_artifact(
+                    &existing_artifact.unwrap().id,
+                    new_content,
+                ).await?;
+                info!("Updated {} via diff patch", filename);
+            } else {
+                // Create new artifact
+                artifact_mgr.create_artifact(
+                    filename.to_string(),
+                    artifact_type,
+                    new_content,
+                    metadata,
+                ).await?;
+                info!("Created {} from diff patch", filename);
+            }
+        }
+        
+        Ok(())
+    }
+
+    /// Parse and apply a unified diff to content
+    fn apply_unified_diff(original: &str, diff: &str) -> Result<String> {
+        let mut lines: Vec<String> = original.lines().map(|l| l.to_string()).collect();
+        
+        // Simple diff parser - handles basic unified diff format
+        let diff_lines: Vec<&str> = diff.lines().collect();
+        let mut i = 0;
+        
+        while i < diff_lines.len() {
+            let line = diff_lines[i];
+            
+            // Look for hunk header: @@ -start,count +start,count @@
+            if line.starts_with("@@") && line.contains("@@") {
+                // Parse the hunk header
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 3 {
+                    // Extract line numbers
+                    let old_range = parts[1].trim_start_matches('-');
+                    
+                    let old_start: usize = old_range.split(',')
+                        .next()
+                        .and_then(|s| s.parse::<usize>().ok())
+                        .unwrap_or(1)
+                        .saturating_sub(1); // Convert to 0-based
+                    
+                    // Process the hunk
+                    i += 1;
+                    let mut current_line = old_start;
+                    let mut new_lines = Vec::new();
+                    
+                    while i < diff_lines.len() && !diff_lines[i].starts_with("@@") {
+                        let diff_line = diff_lines[i];
+                        
+                        if diff_line.starts_with('-') {
+                            // Remove line
+                            current_line += 1;
+                        } else if diff_line.starts_with('+') {
+                            // Add line
+                            new_lines.push(diff_line[1..].to_string());
+                        } else if diff_line.starts_with(' ') {
+                            // Context line
+                            if current_line < lines.len() {
+                                new_lines.push(lines[current_line].clone());
+                            }
+                            current_line += 1;
+                        }
+                        
+                        i += 1;
+                    }
+                    
+                    // Apply the changes
+                    // This is a simplified approach - a real implementation would be more sophisticated
+                    if old_start < lines.len() {
+                        lines.splice(old_start..current_line.min(lines.len()), new_lines);
+                    }
+                }
+            } else {
+                i += 1;
+            }
+        }
+        
+        Ok(lines.join("\n"))
+    }
+
+    async fn extract_code_artifacts(&self, response: &str, step_description: &str, step_category: &StepCategory) -> Result<Vec<(String, String)>> {
         let mut artifacts = Vec::new();
         
         // Extract code blocks with improved filename detection
@@ -279,12 +478,21 @@ impl Executor {
                 let (language, explicit_filename) = if parts.is_empty() {
                     ("txt", None)
                 } else if parts.len() >= 2 {
-                    // Has language and potentially filename
-                    (parts[0], Some(parts[1..].join(" ")))
+                    // Format: ```language filename
+                    if parts[0] == "diff" {
+                        // Special handling for diff blocks: ```diff filename.ext
+                        ("diff", Some(parts[1..].join(" ")))
+                    } else {
+                        // Regular code blocks: ```language filename.ext
+                        (parts[0], Some(parts[1..].join(" ")))
+                    }
                 } else {
-                    // Only has language
+                    // Format: ```language
                     (parts[0], None)
                 };
+                
+                // Check if this is a diff block
+                let is_diff = language == "diff";
                 
                 // Collect the content
                 let mut content = String::new();
@@ -296,97 +504,155 @@ impl Executor {
                 }
                 
                 if !content.is_empty() {
-                    // Determine filename
-                    let filename = if let Some(name) = explicit_filename {
-                        // Use explicitly provided filename
-                        name
-                    } else {
-                        // Infer filename from content and context
-                        code_block_counter += 1;
-                        self.infer_filename(&content, language, code_block_counter)
+                    // Check if this is placeholder/example code that should be skipped
+                    let should_skip = content.lines().take(5).any(|line| {
+                        let trimmed = line.trim();
+                        trimmed.starts_with("# Example:") ||
+                        trimmed.starts_with("// Example:") ||
+                        trimmed.starts_with("# This is an example") ||
+                        trimmed.starts_with("// This is an example") ||
+                        (trimmed.contains("Your code goes here") && trimmed.contains("//")) ||
+                        (trimmed.contains("your code goes here") && trimmed.contains("#"))
+                    });
+                    
+                    // Check if this is generic documentation that should be skipped
+                    let is_generic_doc = language == "markdown" && (
+                        content.contains("please specify the actual") ||
+                        content.contains("Replace `script_name.py` with the actual") ||
+                        content.contains("[options]") ||
+                        content.contains("(if required)") ||
+                        content.contains("(if applicable)") ||
+                        (content.contains("Prerequisites") && content.contains("Options & Arguments"))
+                    );
+                    
+                    // Check if this is a shell command that should be executed, not saved
+                    let is_shell_command = (language == "bash" || language == "sh" || language == "shell") && {
+                        let trimmed = content.trim();
+                        // Short commands (1-3 lines)
+                        content.lines().count() <= 3 && (
+                            // Check if it starts with common command patterns
+                            trimmed.starts_with("python") ||
+                            trimmed.starts_with("cargo") ||
+                            trimmed.starts_with("npm") ||
+                            trimmed.starts_with("yarn") ||
+                            trimmed.starts_with("node") ||
+                            trimmed.starts_with("git") ||
+                            trimmed.starts_with("cd ") ||
+                            trimmed.starts_with("mkdir") ||
+                            trimmed.starts_with("./") ||
+                            trimmed.starts_with("bash") ||
+                            trimmed.starts_with("sh ") ||
+                            // Or contains common test/run patterns
+                            trimmed.contains("pytest") ||
+                            trimmed.contains("unittest") ||
+                            trimmed.contains("run test") ||
+                            trimmed.contains("npm test") ||
+                            trimmed.contains("cargo test") ||
+                            // Check for pipes and redirects (common in shell commands)
+                            (trimmed.contains(" | ") || trimmed.contains(" > ") || trimmed.contains(" && "))
+                        )
                     };
                     
-                    info!("Extracted artifact: {} ({} bytes, language: {})", filename, content.len(), language);
-                    artifacts.push((filename, content.trim().to_string()));
+                    if should_skip {
+                        info!("Skipping example/placeholder code block");
+                    } else if is_generic_doc {
+                        info!("Skipping generic documentation template");
+                    } else if is_shell_command {
+                        info!("Skipping shell command (should be executed, not saved): {}", content.lines().next().unwrap_or(""));
+                    } else if is_diff {
+                        // Apply the diff patch
+                        // First try to extract filename from diff headers
+                        let diff_filename = Self::extract_filename_from_diff(&content).or(explicit_filename.as_ref().map(|s| s.as_str()));
+                        
+                        if let Some(name) = diff_filename {
+                            self.apply_diff_patch(name, &content).await?;
+                        } else {
+                            warn!("Diff block without filename, skipping");
+                        }
+                    } else {
+                        // For CodeModification steps, only create new files if they don't exist
+                        // Otherwise, the LLM should be providing diff blocks to modify existing files
+                        if let StepCategory::CodeModification = step_category {
+                            if let Some(ref name) = explicit_filename {
+                                // Check if file already exists
+                                if let Some(artifact_mgr) = &self.artifact_manager {
+                                    if artifact_mgr.artifact_exists(name).await {
+                                        warn!("CodeModification step provided non-diff code block for existing file '{}'. Skipping to avoid overwrite. LLM should provide diff format for modifications.", name);
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Determine filename
+                        let filename = if let Some(name) = explicit_filename {
+                            // Use explicitly provided filename
+                            name
+                        } else {
+                            // Ask LLM for a proper filename
+                            code_block_counter += 1;
+                            
+                            // Create a prompt to ask for filename
+                            let context_lines = if language == "markdown" { 20 } else { 10 };
+                            let filename_prompt = format!(
+                                "Based on the following {} code from the task '{}', please provide a descriptive filename:\n\n```{}\n{}\n```\n\nProvide ONLY the filename with extension, nothing else. For markdown documentation, use README.md if it's the main documentation.",
+                                language,
+                                step_description,
+                                language,
+                                content.lines().take(context_lines).collect::<Vec<_>>().join("\n")
+                            );
+                            
+                            // Try to get filename from LLM
+                            match self.llm_manager.send_prompt(&filename_prompt).await {
+                                Ok(filename_response) => {
+                                    let suggested_name = filename_response.trim();
+                                    // Validate the suggested filename
+                                    if suggested_name.contains('.') && 
+                                       !suggested_name.contains(' ') && 
+                                       !suggested_name.contains('/') &&
+                                       suggested_name.len() < 100 {
+                                        suggested_name.to_string()
+                                    } else {
+                                        // If invalid, use fallback
+                                        warn!("LLM provided invalid filename: {}", suggested_name);
+                                        format!("file_{}.{}", code_block_counter, language)
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!("Failed to get filename from LLM: {}", e);
+                                    // Fallback to generic name
+                                    format!("file_{}.{}", code_block_counter, language)
+                                }
+                            }
+                        };
+                        
+                        // Skip files marked as examples by the inference logic
+                        if !filename.starts_with("example_") {
+                            info!("Extracted artifact: {} ({} bytes, language: {})", filename, content.len(), language);
+                            artifacts.push((filename, content.trim().to_string()));
+                        } else {
+                            info!("Skipping inferred example file: {}", filename);
+                        }
+                    }
                 }
             }
             i += 1;
         }
         
         info!("Extracted {} artifacts from response", artifacts.len());
-        artifacts
+        Ok(artifacts)
     }
     
-    /// Infer filename from content analysis
-    fn infer_filename(&self, content: &str, language: &str, counter: usize) -> String {
-        // First, determine the appropriate extension
-        let extension = match language {
-            "python" | "py" => "py",
-            "rust" | "rs" => "rs",
-            "javascript" | "js" => "js",
-            "typescript" | "ts" => "ts",
-            "java" => "java",
-            "cpp" | "c++" => "cpp",
-            "c" => "c",
-            "go" => "go",
-            "ruby" | "rb" => "rb",
-            "php" => "php",
-            "shell" | "sh" | "bash" => "sh",
-            "json" => "json",
-            "yaml" | "yml" => "yaml",
-            "toml" => "toml",
-            "markdown" | "md" => "md",
-            "html" => "html",
-            "css" => "css",
-            _ => "txt"
-        };
-        
-        // Try to infer filename from common patterns
-        let content_lower = content.to_lowercase();
-        
-        // Documentation files
-        if extension == "md" && (content_lower.contains("# readme") || 
-                                 content_lower.starts_with("# ")) {
-            return "README.md".to_string();
+    fn extract_filename_from_diff(diff: &str) -> Option<&str> {
+        let lines: Vec<&str> = diff.lines().collect();
+        for line in lines {
+            if line.starts_with("--- ") || line.starts_with("+++ ") {
+                let filename = line.trim_start_matches("--- ").trim_start_matches("+++ ");
+                if filename.contains('.') {
+                    return Some(filename);
+                }
+            }
         }
-        
-        // Test files (language agnostic patterns)
-        if content_lower.contains("test") && 
-           (content_lower.contains("assert") || content_lower.contains("expect") ||
-            content_lower.contains("describe") || content_lower.contains("it(")) {
-            return format!("test_{}.{}", counter, extension);
-        }
-        
-        // Configuration files
-        if extension == "txt" && content_lower.contains("==") && 
-           (content_lower.contains("pip") || content_lower.contains("requirements")) {
-            return "requirements.txt".to_string();
-        }
-        
-        if (extension == "json" || extension == "yaml" || extension == "toml") &&
-           (content_lower.contains("dependencies") || content_lower.contains("version")) {
-            return format!("config.{}", extension);
-        }
-        
-        // Gitignore
-        if content.lines().any(|line| line.starts_with("*.") || line.starts_with("/")) &&
-           content.lines().count() > 2 {
-            return ".gitignore".to_string();
-        }
-        
-        // Main/entry point files (language agnostic)
-        if content_lower.contains("main") || content_lower.contains("entry") ||
-           content_lower.contains("start") || content_lower.contains("init") {
-            return format!("main.{}", extension);
-        }
-        
-        // Generic fallback with more descriptive name
-        format!("file_{}.{}", counter, extension)
-    }
-}
-
-impl Default for Executor {
-    fn default() -> Self {
-        Self::new()
+        None
     }
 }

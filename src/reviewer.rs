@@ -1,7 +1,7 @@
+use std::sync::Arc;
+use std::fmt;
 use anyhow::{Result, Context};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-
 use crate::executor::StepResult;
 use crate::planner::Plan;
 use crate::context::ContextManager;
@@ -34,12 +34,23 @@ pub struct Issue {
     pub suggestion: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum IssueSeverity {
     Critical,  // Must fix before proceeding
     Major,     // Should fix for quality
     Minor,     // Nice to fix but not blocking
     Info,      // Informational only
+}
+
+impl fmt::Display for IssueSeverity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            IssueSeverity::Critical => write!(f, "Critical"),
+            IssueSeverity::Major => write!(f, "Major"),
+            IssueSeverity::Minor => write!(f, "Minor"),
+            IssueSeverity::Info => write!(f, "Info"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -190,130 +201,146 @@ impl Reviewer {
         )
     }
 
-    fn parse_review_response(&self, response: &str, results: &[StepResult]) -> Result<ReviewResult> {
-        // Parse the LLM response to extract structured review
-        // In production, this would use more sophisticated parsing or ask for JSON
-        
-        let lower_response = response.to_lowercase();
-        
-        // Determine overall quality based on keywords
-        let overall_quality = if lower_response.contains("excellent") || lower_response.contains("perfect") {
-            QualityLevel::Excellent
-        } else if lower_response.contains("good") || lower_response.contains("well") {
-            QualityLevel::Good
-        } else if lower_response.contains("fair") || lower_response.contains("adequate") {
-            QualityLevel::Fair
-        } else if lower_response.contains("poor") || lower_response.contains("bad") {
-            QualityLevel::Poor
-        } else {
-            QualityLevel::Good // Default
-        };
-        
-        // Extract issues based on keywords
+    fn parse_review_response(&self, response: &str, _results: &[StepResult]) -> Result<ReviewResult> {
+        let mut overall_quality = QualityLevel::Good;
+        let mut ready_to_deploy = false;
+        let mut summary = String::new();
         let mut issues = Vec::new();
         
-        if lower_response.contains("error") || lower_response.contains("bug") {
-            issues.push(Issue {
-                severity: IssueSeverity::Major,
-                category: IssueCategory::Logic,
-                description: "Potential logic error detected".to_string(),
-                location: None,
-                suggestion: Some("Review logic for correctness".to_string()),
-            });
-        }
+        // Parse structured response
+        let lines: Vec<&str> = response.lines().collect();
+        let mut in_issues_section = false;
         
-        if lower_response.contains("security") || lower_response.contains("vulnerable") {
-            issues.push(Issue {
-                severity: IssueSeverity::Critical,
-                category: IssueCategory::Security,
-                description: "Security concern identified".to_string(),
-                location: None,
-                suggestion: Some("Address security vulnerabilities".to_string()),
-            });
-        }
-        
-        if lower_response.contains("performance") || lower_response.contains("slow") {
-            issues.push(Issue {
-                severity: IssueSeverity::Minor,
-                category: IssueCategory::Performance,
-                description: "Performance optimization opportunity".to_string(),
-                location: None,
-                suggestion: Some("Consider performance improvements".to_string()),
-            });
-        }
-        
-        // Check for failed steps
-        for result in results {
-            if !result.success {
-                issues.push(Issue {
-                    severity: IssueSeverity::Critical,
-                    category: IssueCategory::Logic,
-                    description: format!("Step {} failed", result.step_id),
-                    location: Some(result.step_id.clone()),
-                    suggestion: result.error.clone(),
-                });
+        for line in lines {
+            let line = line.trim();
+            
+            if line.starts_with("QUALITY:") {
+                let quality_str = line.replace("QUALITY:", "").trim().to_lowercase();
+                overall_quality = match quality_str.as_str() {
+                    "excellent" => QualityLevel::Excellent,
+                    "good" => QualityLevel::Good,
+                    "fair" => QualityLevel::Fair,
+                    "poor" => QualityLevel::Poor,
+                    _ => QualityLevel::Good,
+                };
+            } else if line.starts_with("READY_TO_DEPLOY:") {
+                ready_to_deploy = line.to_lowercase().contains("yes");
+            } else if line.starts_with("SUMMARY:") {
+                summary = line.replace("SUMMARY:", "").trim().to_string();
+            } else if line.starts_with("ISSUES:") {
+                in_issues_section = true;
+            } else if in_issues_section && line.starts_with("- SEVERITY:") {
+                // Parse issue line
+                if let Some(issue) = self.parse_issue_line(line) {
+                    issues.push(issue);
+                }
             }
         }
         
-        // Generate suggestions
-        let mut suggestions = Vec::new();
-        
-        if !lower_response.contains("test") {
-            suggestions.push(Suggestion {
-                title: "Add Tests".to_string(),
-                description: "Consider adding unit and integration tests".to_string(),
-                priority: SuggestionPriority::High,
-            });
+        // Fallback summary if not found
+        if summary.is_empty() {
+            let issue_count = issues.len();
+            let critical_count = issues.iter().filter(|i| matches!(i.severity, IssueSeverity::Critical)).count();
+            summary = format!(
+                "Review complete. Quality: {:?}. Found {} issues ({} critical). {}",
+                overall_quality,
+                issue_count,
+                critical_count,
+                if ready_to_deploy { "Ready to deploy" } else { "Not ready to deploy" }
+            );
         }
-        
-        if !lower_response.contains("document") {
-            suggestions.push(Suggestion {
-                title: "Improve Documentation".to_string(),
-                description: "Add or improve code documentation".to_string(),
-                priority: SuggestionPriority::Medium,
-            });
-        }
-        
-        // Determine if ready to deploy
-        let critical_issues = issues.iter()
-            .filter(|i| matches!(i.severity, IssueSeverity::Critical))
-            .count();
-        
-        let ready_to_deploy = critical_issues == 0 && 
-            !matches!(overall_quality, QualityLevel::Poor);
-        
-        // Generate summary
-        let summary = format!(
-            "Review complete. Quality: {:?}. Found {} issues ({} critical). {}",
-            overall_quality,
-            issues.len(),
-            critical_issues,
-            if ready_to_deploy { "Ready to deploy." } else { "Not ready to deploy." }
-        );
         
         Ok(ReviewResult {
             overall_quality,
             issues,
-            suggestions,
+            suggestions: Vec::new(),
             ready_to_deploy,
             summary,
         })
     }
 
+    fn parse_issue_line(&self, line: &str) -> Option<Issue> {
+        // Remove the leading "- SEVERITY: " part
+        let content = line.strip_prefix("- SEVERITY:")?.trim();
+        
+        // Split by "|" to get parts
+        let parts: Vec<&str> = content.split("|").collect();
+        
+        if parts.len() < 4 {
+            return None;
+        }
+        
+        // Extract severity from first part
+        let severity_str = parts[0].trim().to_lowercase();
+        let severity = match severity_str.as_str() {
+            "critical" => IssueSeverity::Critical,
+            "major" => IssueSeverity::Major,
+            "minor" => IssueSeverity::Minor,
+            "suggestion" => IssueSeverity::Info,
+            _ => return None,
+        };
+        
+        // Extract category from "CATEGORY: xxx" format
+        let category_part = parts[1].trim();
+        let category_str = category_part.strip_prefix("CATEGORY:")?.trim().to_lowercase();
+        let category = match category_str.as_str() {
+            "logic" => IssueCategory::Logic,
+            "performance" => IssueCategory::Performance,
+            "security" => IssueCategory::Security,
+            "codestyle" => IssueCategory::CodeStyle,
+            "bestpractices" => IssueCategory::BestPractices,
+            "documentation" => IssueCategory::Documentation,
+            "testing" => IssueCategory::Testing,
+            "dependencies" => IssueCategory::Dependencies,
+            _ => return None,
+        };
+        
+        // Extract description
+        let desc_part = parts[2].trim();
+        let description = desc_part.strip_prefix("DESCRIPTION:")?.trim().to_string();
+        
+        // Extract suggestion
+        let suggestion = if parts.len() > 3 {
+            let sug_part = parts[3].trim();
+            sug_part.strip_prefix("SUGGESTION:").map(|s| s.trim().to_string())
+        } else {
+            None
+        };
+        
+        Some(Issue {
+            severity,
+            category,
+            description,
+            location: None,
+            suggestion,
+        })
+    }
+
     fn default_review_prompt() -> String {
-        r#"You are a senior software engineer conducting a thorough code review.
+        r#"You are a senior software engineer conducting a code review.
 
-Review the execution results below for:
-1. Correctness - Does the implementation meet the stated goal?
-2. Code Quality - Is the code clean, readable, and maintainable?
-3. Best Practices - Does it follow language-specific best practices?
-4. Security - Are there any security vulnerabilities?
-5. Performance - Are there obvious performance issues?
-6. Testing - Is the code adequately tested?
-7. Documentation - Is the code well-documented?
+Review the execution results and identify ACTUAL issues if any exist.
 
-Identify any issues, categorize them by severity, and provide constructive suggestions.
-Be specific about problems and how to fix them."#.to_string()
+IMPORTANT: Only report issues that ACTUALLY exist in the code. Do not report theoretical or potential issues that don't apply to the specific code.
+
+For each ACTUAL issue found, specify:
+- Severity: Critical (blocks functionality), Major (significant problem), Minor (small issue), Suggestion (improvement)
+- Category: Logic, Security, Performance, CodeStyle, BestPractices, Documentation, Testing
+- Description: Specific description of the actual issue
+- Location: Where the issue is (if applicable)
+- Suggestion: How to fix it
+
+Format your response as:
+QUALITY: [Excellent/Good/Fair/Poor]
+READY_TO_DEPLOY: [Yes/No]
+SUMMARY: [One line summary]
+
+ISSUES:
+[If no issues exist, write "No issues found"]
+[Otherwise list each issue as:]
+- SEVERITY: [severity] | CATEGORY: [category] | DESCRIPTION: [description] | SUGGESTION: [suggestion]
+
+Be honest and accurate. For simple scripts like "Hello World", there are usually NO actual issues."#.to_string()
     }
 }
 

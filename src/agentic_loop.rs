@@ -1,16 +1,18 @@
 use anyhow::Result;
-use log::{info, error, warn};
+use log::{info, warn, error};
 use std::sync::Arc;
-
-use crate::interpreter::Interpreter;
-use crate::planner::{Planner, Plan};
-use crate::executor::{Executor, StepResult};
-use crate::reviewer::{Reviewer, ReviewResult};
-use crate::llm_manager::LLMManager;
-use crate::event_bus::{EventBus, Event};
-use crate::artifact::ArtifactManager;
-use crate::context::ContextManager;
-use crate::config::Config;
+use crate::{
+    artifact::{ArtifactManager, ArtifactType},
+    planner::{Planner, Plan},
+    executor::{Executor, StepResult},
+    reviewer::{Reviewer, ReviewResult, IssueSeverity},
+    llm_manager::LLMManager,
+    config::Config,
+    context::ContextManager,
+    event_bus::{EventBus, Event},
+    iteration_context::{IterationContext, FileInfo},
+    interpreter::Interpreter,
+};
 
 /// Controls the iterative planning-action-review cycle
 pub struct AgenticLoop {
@@ -35,7 +37,7 @@ impl AgenticLoop {
         Self {
             interpreter: Interpreter::new(),
             planner: Planner::new(),
-            executor: Executor::new().with_event_bus(event_bus.clone()),
+            executor: Executor::new(llm_manager.clone()).with_event_bus(event_bus.clone()),
             reviewer: Reviewer::new().with_event_bus(event_bus.clone()),
             llm_manager,
             max_iterations,
@@ -90,10 +92,24 @@ impl AgenticLoop {
         
         let mut iteration = 0;
         let mut _last_review: Option<ReviewResult> = None;
+        let mut iteration_context: Option<IterationContext> = None;
         
         while iteration < self.max_iterations {
             iteration += 1;
             info!("Starting iteration {}/{}", iteration, self.max_iterations);
+            
+            // Create or update iteration context
+            let mut current_context = iteration_context.take()
+                .unwrap_or_else(|| IterationContext::new(iteration));
+            current_context.iteration = iteration;
+            
+            info!("Starting iteration {} with {} existing files", 
+                iteration, 
+                current_context.existing_files.len()
+            );
+            for (filename, _) in &current_context.existing_files {
+                info!("  Existing file: {}", filename);
+            }
             
             // Emit iteration started event
             self.event_bus.emit(Event::Custom {
@@ -101,12 +117,18 @@ impl AgenticLoop {
                 data: serde_json::json!({
                     "iteration": iteration,
                     "max_iterations": self.max_iterations,
+                    "has_existing_files": current_context.has_existing_files(),
                 }),
             }).await?;
             
             // Plan the task
             info!("Creating plan for task...");
-            let plan = match self.planner.plan(&task, &*self.llm_manager, self.config.as_deref()).await {
+            let plan = match self.planner.plan(
+                &task, 
+                &*self.llm_manager, 
+                self.config.as_deref(),
+                Some(&current_context)
+            ).await {
                 Ok(p) => p,
                 Err(e) => {
                     error!("Planning failed: {}", e);
@@ -120,7 +142,7 @@ impl AgenticLoop {
             
             // Execute the plan
             info!("Executing plan...");
-            let results = match self.executor.execute(&plan, &self.llm_manager, context_id).await {
+            let results = match self.executor.execute(&plan, context_id).await {
                 Ok(r) => r,
                 Err(e) => {
                     error!("Execution failed: {}", e);
@@ -132,6 +154,38 @@ impl AgenticLoop {
             // Count successful steps
             let successful_steps = results.iter().filter(|r| r.success).count();
             info!("Executed {}/{} steps successfully", successful_steps, results.len());
+            
+            // Update iteration context with created artifacts
+            if let Some(artifact_mgr) = &self.artifact_manager {
+                let artifacts = artifact_mgr.list_artifacts().await;
+                info!("Found {} artifacts to add to iteration context", artifacts.len());
+                for artifact in artifacts {
+                    let path = artifact.name.clone();
+                    if !current_context.existing_files.contains_key(&path) {
+                        info!("Adding artifact to iteration context: {}", path);
+                        let file_info = FileInfo {
+                            path: path.clone(),
+                            language: match &artifact.artifact_type {
+                                ArtifactType::SourceCode => "source",
+                                ArtifactType::Configuration => "config",
+                                ArtifactType::Documentation => "markdown",
+                                ArtifactType::Test => "test",
+                                ArtifactType::Build => "build",
+                                ArtifactType::Script => "script",
+                                ArtifactType::Data => "data",
+                                ArtifactType::Other(_) => "other",
+                            }.to_string(),
+                            description: artifact.metadata.get("description")
+                                .cloned()
+                                .unwrap_or_else(|| format!("{} file", artifact.artifact_type)),
+                            has_issues: false,
+                            issues: Vec::new(),
+                        };
+                        current_context.add_file(path, file_info);
+                    }
+                }
+                info!("Iteration context now has {} files", current_context.existing_files.len());
+            }
             
             // Review the results
             info!("Reviewing execution results...");
@@ -145,6 +199,29 @@ impl AgenticLoop {
             };
             
             info!("Review complete: {}", review.summary);
+            
+            // Log the actual issues found
+            if !review.issues.is_empty() {
+                info!("Issues found during review:");
+                for issue in &review.issues {
+                    info!("  - [{}] {:?}: {}", 
+                        issue.severity, 
+                        issue.category,
+                        issue.description
+                    );
+                    if let Some(suggestion) = &issue.suggestion {
+                        info!("    Suggestion: {}", suggestion);
+                    }
+                }
+            }
+            
+            // Update iteration context with review results
+            current_context.update_from_review(review.clone());
+            current_context.progress_summary = format!(
+                "Completed {} steps. Review: {}",
+                successful_steps,
+                review.summary
+            );
             
             // Check if we're done
             if review.ready_to_deploy {
@@ -168,21 +245,20 @@ impl AgenticLoop {
                     "Max iterations reached",
                     &format!("Failed to complete task after {} iterations", iteration),
                 ).await?;
-                return Ok(());
+                break;
             }
             
-            // If we have critical issues, we might need to revise the plan
+            // Handle critical issues
             let critical_issues = review.issues.iter()
-                .filter(|i| matches!(i.severity, crate::reviewer::IssueSeverity::Critical))
+                .filter(|i| i.severity == IssueSeverity::Critical)
                 .count();
             
             if critical_issues > 0 {
                 warn!("Found {} critical issues, will revise plan", critical_issues);
-                // In a more sophisticated system, we would modify the task based on review feedback
-                // For now, we'll just try again
             }
             
-            _last_review = Some(review);
+            // Store the context for the next iteration
+            iteration_context = Some(current_context);
         }
         
         warn!("Exited loop without resolution");

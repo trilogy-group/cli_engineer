@@ -400,24 +400,6 @@ impl ContextManager {
         (char_estimate + word_estimate) / 2
     }
     
-    /// Get context usage statistics
-    pub async fn get_usage(&self, context_id: &str) -> Result<(usize, f32)> {
-        let contexts = self.contexts.read().await;
-        
-        if let Some(context) = contexts.get(context_id) {
-            let max_tokens = if let Some(llm_manager) = &self.llm_manager {
-                llm_manager.get_context_size()
-            } else {
-                self.config.max_tokens // Fallback to config if no LLM manager
-            };
-            
-            let usage_ratio = context.total_tokens as f32 / max_tokens as f32;
-            Ok((context.total_tokens, usage_ratio * 100.0))
-        } else {
-            anyhow::bail!("Context not found: {}", context_id)
-        }
-    }
-    
     /// Clear all messages from a context
     #[allow(dead_code)]
     pub async fn clear_context(&self, context_id: &str) -> Result<()> {

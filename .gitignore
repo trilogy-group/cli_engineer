@@ -23,4 +23,4 @@ target/
 research/
 *.pdf
 *.markdown
-artifacts/*
+#artifacts/*

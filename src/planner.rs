@@ -1,10 +1,12 @@
 use anyhow::{Result, Context};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-
-use crate::interpreter::Task;
-use crate::llm_manager::LLMManager;
-use crate::config::Config;
+use crate::{
+    config::Config,
+    interpreter::Task,
+    iteration_context::IterationContext,
+    llm_manager::LLMManager,
+};
 
 /// Represents a structured plan with categorized steps
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,19 +48,23 @@ pub enum ComplexityLevel {
 }
 
 pub struct Planner {
-    planning_prompt_template: String,
 }
 
 impl Planner {
     pub fn new() -> Self {
         Self {
-            planning_prompt_template: Self::default_planning_prompt(),
         }
     }
 
     /// Create a structured plan for the given task using the provided LLM
-    pub async fn plan(&self, task: &Task, llm_manager: &LLMManager, config: Option<&Config>) -> Result<Plan> {
-        let prompt = self.build_planning_prompt(task, config);
+    pub async fn plan(
+        &self, 
+        task: &Task, 
+        llm_manager: &LLMManager, 
+        config: Option<&Config>,
+        iteration_context: Option<&IterationContext>,
+    ) -> Result<Plan> {
+        let prompt = self.build_planning_prompt(task, config, iteration_context);
         let response = llm_manager.send_prompt(&prompt).await
             .context("Failed to get planning response from LLM")?;
         
@@ -67,20 +73,56 @@ impl Planner {
             .context("Failed to parse plan from LLM response")
     }
 
-    fn build_planning_prompt(&self, task: &Task, config: Option<&Config>) -> String {
+    fn build_planning_prompt(&self, task: &Task, config: Option<&Config>, iteration_context: Option<&IterationContext>) -> String {
         let mut prompt = format!(
-            "{}\n\nTask Description: {}\nGoal: {}\nContext: {}\nConstraints: {:?}",
-            self.planning_prompt_template,
+            "You are an expert software architect creating a step-by-step plan.
+
+Task: {}
+Goal: {}
+
+Create a detailed, actionable plan with specific steps. Each step should:
+1. Have a clear, specific action
+2. Build upon previous steps
+3. Be categorized appropriately
+
+IMPORTANT: Base your plan ONLY on the actual task requirements and existing code. DO NOT:
+- Invent problems that don't exist
+- Add unnecessary security checks for simple scripts
+- Create steps to fix non-existent issues
+- Add complex error handling for trivial programs
+
+Categories available:
+- File Operation: Create, read, update, delete files
+- Code Generation: Generate new code from scratch
+- Code Modification: Modify existing code (use for files that already exist)
+- Testing: Create tests (DO NOT execute them)
+- Documentation: Create necessary documentation
+- Research: Research information or requirements
+- Review: Review existing code/documentation
+
+Provide the plan as a numbered list. Be concise and specific.",
             task.description,
-            task.goal,
-            task.context,
-            task.constraints
+            task.goal
         );
         
         // Add git-related instructions if disable_auto_git is enabled
         if let Some(cfg) = config {
             if cfg.execution.disable_auto_git {
                 prompt.push_str("\n\nIMPORTANT: Do NOT include git repository initialization (git init) or git-related setup steps unless explicitly requested in the task description. Focus only on the core functionality requested.");
+            }
+        }
+        
+        // Add iteration context if provided
+        if let Some(ctx) = iteration_context {
+            prompt.push_str(&format!("\n\nIteration Context:\n{}", ctx));
+            
+            // Add specific instructions for handling existing files
+            if ctx.has_existing_files() {
+                prompt.push_str("\n\nIMPORTANT: Files already exist from previous iterations. When planning:");
+                prompt.push_str("\n1. DO NOT recreate files that already exist - use 'Code Modification' steps instead");
+                prompt.push_str("\n2. Focus on addressing the specific issues identified in the review");
+                prompt.push_str("\n3. If a file needs changes, describe what needs to be modified, not recreated");
+                prompt.push_str("\n4. Only create new files if they don't already exist");
             }
         }
         
@@ -180,24 +222,6 @@ impl Planner {
             success_criteria: vec![format!("Successfully complete: {}", text)],
             estimated_tokens: text.len() / 4, // Rough estimate
         }
-    }
-
-    fn default_planning_prompt() -> String {
-        r#"You are a senior software architect creating a detailed implementation plan.
-        
-Given the task below, create a numbered list of specific, actionable steps.
-Each step should be:
-- Clear and specific about what needs to be done
-- Focused on a single action or outcome
-- Ordered logically with dependencies in mind
-
-Consider:
-- What files need to be created or modified
-- What code needs to be written or changed
-- What tests or validations are needed
-- What documentation should be updated
-
-Provide the steps as a numbered list (1., 2., 3., etc.)"#.to_string()
     }
 }
 

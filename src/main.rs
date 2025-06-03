@@ -35,6 +35,7 @@ mod event_bus;
 mod providers;
 mod artifact;
 mod context;
+mod iteration_context;
 
 #[derive(Parser, Debug)]
 #[command(

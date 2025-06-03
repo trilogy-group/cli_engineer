@@ -304,6 +304,12 @@ impl ArtifactManager {
         
         Ok(())
     }
+    
+    /// Check if an artifact with the given name exists
+    pub async fn artifact_exists(&self, name: &str) -> bool {
+        let artifacts = self.artifacts.read().await;
+        artifacts.iter().any(|a| a.name == name)
+    }
 }
 
 // Implement EventEmitter trait

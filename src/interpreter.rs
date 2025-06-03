@@ -5,8 +5,6 @@ use anyhow::Result;
 pub struct Task {
     pub description: String,
     pub goal: String,
-    pub context: String,
-    pub constraints: String,
 }
 
 /// Interprets raw input into a `Task`.
@@ -28,17 +26,9 @@ impl Interpreter {
             format!("Complete task: {}", input)
         };
         
-        // Extract context - for now just use the input
-        let context = format!("User request: {}", input);
-        
-        // Default constraints
-        let constraints = "Follow best practices, write clean code, include error handling".to_string();
-        
         Ok(Task { 
             description: input.to_string(),
             goal,
-            context,
-            constraints,
         })
     }
 }
