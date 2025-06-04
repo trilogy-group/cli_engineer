@@ -1,6 +1,6 @@
 [package]
 name = "cli_engineer"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2024"
 description = "An experimental autonomous CLI coding agent"
 license = "MIT"
@@ -9,6 +9,16 @@ authors = ["Leonardo Gonzalez <leonardo.gonzalez@trilogy.com>"]
 keywords = ["cli", "agent", "coding", "autonomous", "llm"]
 categories = ["command-line-utilities", "development-tools"]
 readme = "README.md"
+exclude = [
+    "artifacts/*",
+    ".windsurf/*",
+    ".DS_Store",
+    "*.md",
+    "cli_engineer.toml",
+    "target/*",
+    ".git/*",
+    ".gitignore"
+]
 
 [[bin]]
 name = "cli_engineer"
