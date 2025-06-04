@@ -1,6 +1,6 @@
 [package]
 name = "cli_engineer"
-version = "0.4.1"
+version = "0.5.0"
 edition = "2024"
 description = "An experimental autonomous CLI coding agent"
 license = "MIT"

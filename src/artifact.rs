@@ -137,6 +137,12 @@ impl ArtifactManager {
         
         let path = self.artifact_dir.join(&filename);
         
+        // Create parent directories if they don't exist
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .context("Failed to create parent directories")?;
+        }
+        
         // Write content to file
         let mut file = fs::File::create(&path)
             .context("Failed to create artifact file")?;

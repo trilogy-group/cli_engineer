@@ -1,12 +1,12 @@
 # CLI Engineer Configuration File
-# 
+#
 # API keys are stored in environment variables:
 # - OPENROUTER_API_KEY for OpenRouter
-# - OPENAI_API_KEY for OpenAI  
+# - OPENAI_API_KEY for OpenAI
 # - ANTHROPIC_API_KEY for Anthropic
 
 [ai_providers.openai]
-enabled = true
+enabled = false
 model = "gpt-4.1"
 temperature = 1
 cost_per_1m_input_tokens = 2.000
@@ -14,7 +14,7 @@ cost_per_1m_output_tokens = 8.000
 max_context_tokens = 1047576
 
 [ai_providers.anthropic]
-enabled = false
+enabled = true
 model = "claude-sonnet-4-0"
 temperature = 1
 cost_per_1m_input_tokens = 3.00
@@ -31,7 +31,7 @@ max_context_tokens = 65536
 
 [execution]
 # Maximum iterations for the agentic loop
-max_iterations = 2
+max_iterations = 12
 
 # Enable parallel task execution
 parallel_enabled = true

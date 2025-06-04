@@ -35,4 +35,3 @@ cargo install cli_engineer
 cli_engineer --help
 ```
 
-Use `--headless` to disable UI output.
