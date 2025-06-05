@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use clap::{Parser, ValueEnum};
 use uuid::Uuid;
 use tokio::time::Duration;
+use tokio::sync::oneshot;
 
 use llm_manager::{LLMProvider, LLMManager, LocalProvider};
 use agentic_loop::AgenticLoop;
@@ -114,13 +115,19 @@ async fn main() -> Result<()> {
 
         let ui_ref = Arc::new(Mutex::new(ui));
         let ui_clone = ui_ref.clone();
-        
+        let (stop_tx, mut stop_rx) = oneshot::channel();
+
         // Start periodic UI updates
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_millis(100));
             loop {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                if let Ok(mut ui_guard) = ui_clone.try_lock() {
-                    let _ = ui_guard.throttled_render();
+                tokio::select! {
+                    _ = interval.tick() => {
+                        if let Ok(mut ui_guard) = ui_clone.try_lock() {
+                            let _ = ui_guard.throttled_render();
+                        }
+                    }
+                    _ = &mut stop_rx => break,
                 }
             }
         });
@@ -142,11 +149,15 @@ async fn main() -> Result<()> {
 
         match result {
             Ok(_) => {
+                let _ = stop_tx.send(());
+                let _ = handle.await;
                 if let Ok(mut ui_guard) = ui_ref.try_lock() {
                     ui_guard.finish()?;
                 }
             }
             Err(e) => {
+                let _ = stop_tx.send(());
+                let _ = handle.await;
                 if let Ok(mut ui_guard) = ui_ref.try_lock() {
                     ui_guard.display_error(&format!("{}", e))?;
                     ui_guard.finish()?;
