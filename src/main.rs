@@ -1,13 +1,13 @@
 use anyhow::Result;
 use log::{info, error};
 use std::sync::{Arc, Mutex};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use uuid::Uuid;
 use tokio::time::Duration;
 
 use llm_manager::{LLMProvider, LLMManager, LocalProvider};
 use agentic_loop::AgenticLoop;
-use artifact::ArtifactManager;
+use artifact::{ArtifactManager, ArtifactType};
 use config::Config;
 use event_bus::{EventBus, Event, EventEmitter};
 use context::{ContextManager, ContextConfig};
@@ -37,10 +37,24 @@ mod artifact;
 mod context;
 mod iteration_context;
 
+#[derive(ValueEnum, Debug, Clone)]
+enum CommandKind {
+    #[clap(help = "Code generation")]
+    Code,
+    #[clap(help = "Refactoring")]
+    Refactor,
+    #[clap(help = "Code review")]
+    Review,
+    #[clap(help = "Documentation generation")]
+    Docs,
+    #[clap(help = "Security analysis")]
+    Security,
+}
+
 #[derive(Parser, Debug)]
 #[command(
     name = "cli_engineer",
-    about = "A skeletal implementation of an autonomous CLI coding agent written in Rust"
+    about = "Agentic CLI for software engineering automation"
 )]
 struct Args {
     /// Enable verbose logging
@@ -52,9 +66,12 @@ struct Args {
     /// Configuration file path
     #[arg(short, long)]
     config: Option<String>,
-    /// Command or natural language instruction
+    /// Command to execute
+    #[arg(value_enum)]
+    command: CommandKind,
+    /// Optional prompt describing the task
     #[arg(last = true)]
-    command: Vec<String>,
+    prompt: Vec<String>,
 }
 
 #[tokio::main]
@@ -79,24 +96,22 @@ async fn main() -> Result<()> {
     // Load configuration
     let config = Config::load(&args.config)?;
     
+    let prompt = args.prompt.join(" ");
+
     if args.dashboard {
         // Use dashboard UI when --dashboard is specified
         let mut ui = DashboardUI::new(false);
         ui.set_event_bus(event_bus.clone());
-        
+
         // Start UI
         ui.start()?;
-        
-        // Join command into a single string
-        let command = args.command.join(" ");
-        
-        if command.is_empty() {
-            ui.display_error("No command provided")?;
+
+        if matches!(args.command, CommandKind::Code) && prompt.is_empty() {
+            ui.display_error("PROMPT required for code command")?;
             ui.finish()?;
             return Ok(());
         }
-        
-        // Run the main logic with dashboard UI
+
         let ui_ref = Arc::new(Mutex::new(ui));
         let ui_clone = ui_ref.clone();
         
@@ -110,7 +125,22 @@ async fn main() -> Result<()> {
             }
         });
         
-        match run_with_ui(command, config, event_bus.clone()).await {
+        let result = match args.command {
+            CommandKind::Code => run_with_ui(prompt.clone(), config, event_bus.clone()).await,
+            CommandKind::Refactor => {
+                let p = if prompt.is_empty() {
+                    "Analyze the current directory and perform recommended refactoring.".to_string()
+                } else {
+                    prompt.clone()
+                };
+                run_with_ui(format!("Refactor codebase. {}", p), config, event_bus.clone()).await
+            }
+            CommandKind::Review => run_review(prompt.clone(), config, event_bus.clone()).await,
+            CommandKind::Docs => run_docs(prompt.clone(), config, event_bus.clone()).await,
+            CommandKind::Security => run_security(prompt.clone(), config, event_bus.clone()).await,
+        };
+
+        match result {
             Ok(_) => {
                 if let Ok(mut ui_guard) = ui_ref.try_lock() {
                     ui_guard.finish()?;
@@ -136,17 +166,28 @@ async fn main() -> Result<()> {
         // Start UI
         ui.start()?;
         
-        // Join command into a single string
-        let command = args.command.join(" ");
-        
-        if command.is_empty() {
-            ui.display_error("No command provided").await?;
+        if matches!(args.command, CommandKind::Code) && prompt.is_empty() {
+            ui.display_error("PROMPT required for code command").await?;
             ui.finish();
             return Ok(());
         }
-        
-        // Run the main logic
-        match run_with_ui(command, config, event_bus.clone()).await {
+
+        let result = match args.command {
+            CommandKind::Code => run_with_ui(prompt.clone(), config, event_bus.clone()).await,
+            CommandKind::Refactor => {
+                let p = if prompt.is_empty() {
+                    "Analyze the current directory and perform recommended refactoring.".to_string()
+                } else {
+                    prompt.clone()
+                };
+                run_with_ui(format!("Refactor codebase. {}", p), config, event_bus.clone()).await
+            }
+            CommandKind::Review => run_review(prompt.clone(), config, event_bus.clone()).await,
+            CommandKind::Docs => run_docs(prompt.clone(), config, event_bus.clone()).await,
+            CommandKind::Security => run_security(prompt.clone(), config, event_bus.clone()).await,
+        };
+
+        match result {
             Ok(_) => ui.finish(),
             Err(e) => {
                 ui.display_error(&format!("{}", e)).await?;
@@ -160,79 +201,8 @@ async fn main() -> Result<()> {
 }
 
 async fn run_with_ui(command: String, config: Config, event_bus: Arc<EventBus>) -> Result<()> {
-    // Initialize artifact manager
-    let mut artifact_manager = ArtifactManager::new(std::env::current_dir()?.join(&config.execution.artifact_dir))?;
-    info!("ArtifactManager initialized.");
-    artifact_manager.set_event_bus(event_bus.clone());
-    let artifact_manager = Arc::new(artifact_manager);
-    
-    // Initialize context manager
-    let context_config = ContextConfig {
-        max_tokens: config.context.max_tokens,
-        compression_threshold: config.context.compression_threshold,
-        cache_enabled: config.context.cache_enabled,
-        cache_dir: std::env::current_dir()?.join(".cli_engineer").join("context_cache"),
-    };
-    
-    let mut context_manager = ContextManager::new(context_config)?;
-    info!("ContextManager initialized.");
-    context_manager.set_event_bus(event_bus.clone());
-    
-    // Initialize providers
-    let mut providers: Vec<Box<dyn LLMProvider>> = Vec::new();
-    
-    // OpenRouter provider (preferred)
-    if let Some(openrouter_config) = &config.ai_providers.openrouter {
-        if openrouter_config.enabled {
-            match OpenRouterProvider::new(
-                Some(openrouter_config.model.clone()),
-                openrouter_config.temperature
-            ) {
-                Ok(provider) => {
-                    info!("Initialized OpenRouter provider");
-                    providers.push(Box::new(provider));
-                },
-                Err(e) => error!("Failed to initialize OpenRouter provider: {}", e),
-            }
-        }
-    }
-    
-    // OpenAI provider fallback
-    if let Some(openai_config) = &config.ai_providers.openai {
-        if openai_config.enabled {
-            providers.push(Box::new(OpenAIProvider::new(
-                Some(openai_config.model.clone()),
-                openai_config.temperature
-            )?));
-            info!("Initialized OpenAI provider");
-        }
-    }
-    
-    // Anthropic provider fallback
-    if let Some(anthropic_config) = &config.ai_providers.anthropic {
-        if anthropic_config.enabled {
-            providers.push(Box::new(AnthropicProvider::new(
-                Some(anthropic_config.model.clone()),
-                anthropic_config.temperature
-            )?));
-            info!("Initialized Anthropic provider");
-        }
-    }
-    
-    // Default to LocalProvider if no other providers are available
-    if providers.is_empty() {
-        error!("No AI providers configured, using LocalProvider");
-        providers.push(Box::new(LocalProvider));
-    }
-    
-    // Create LLM manager with providers
-    let llm_manager = Arc::new(LLMManager::new(providers, event_bus.clone(), Arc::new(config.clone())));
-    info!("LLMManager initialized.");
-    
-    // Share LLM manager with context manager for intelligent compression
-    context_manager.set_llm_manager(llm_manager.clone());
-    
-    let context_manager = Arc::new(context_manager);
+    let (llm_manager, artifact_manager, context_manager) =
+        setup_managers(&config, event_bus.clone()).await?;
     
     let task_id = Uuid::new_v4().to_string();
     event_bus.emit(Event::TaskStarted { task_id: task_id.clone(), description: command.clone() }).await?;
@@ -283,4 +253,210 @@ async fn run_with_ui(command: String, config: Config, event_bus: Arc<EventBus>) 
     }
     
     result.map(|_| ())
+}
+
+async fn setup_managers(
+    config: &Config,
+    event_bus: Arc<EventBus>,
+) -> Result<(Arc<LLMManager>, Arc<ArtifactManager>, Arc<ContextManager>)> {
+    // Initialize artifact manager
+    let mut artifact_manager =
+        ArtifactManager::new(std::env::current_dir()?.join(&config.execution.artifact_dir))?;
+    artifact_manager.set_event_bus(event_bus.clone());
+    let artifact_manager = Arc::new(artifact_manager);
+
+    // Initialize context manager
+    let context_config = ContextConfig {
+        max_tokens: config.context.max_tokens,
+        compression_threshold: config.context.compression_threshold,
+        cache_enabled: config.context.cache_enabled,
+        cache_dir: std::env::current_dir()?.join(".cli_engineer").join("context_cache"),
+    };
+
+    let mut context_manager = ContextManager::new(context_config)?;
+    context_manager.set_event_bus(event_bus.clone());
+
+    // Initialize providers
+    let mut providers: Vec<Box<dyn LLMProvider>> = Vec::new();
+
+    if let Some(openrouter_config) = &config.ai_providers.openrouter {
+        if openrouter_config.enabled {
+            match OpenRouterProvider::new(
+                Some(openrouter_config.model.clone()),
+                openrouter_config.temperature,
+            ) {
+                Ok(p) => {
+                    providers.push(Box::new(p));
+                }
+                Err(e) => error!("Failed to initialize OpenRouter provider: {}", e),
+            }
+        }
+    }
+
+    if let Some(openai_config) = &config.ai_providers.openai {
+        if openai_config.enabled {
+            providers.push(Box::new(OpenAIProvider::new(
+                Some(openai_config.model.clone()),
+                openai_config.temperature,
+            )?));
+        }
+    }
+
+    if let Some(anthropic_config) = &config.ai_providers.anthropic {
+        if anthropic_config.enabled {
+            providers.push(Box::new(AnthropicProvider::new(
+                Some(anthropic_config.model.clone()),
+                anthropic_config.temperature,
+            )?));
+        }
+    }
+
+    if providers.is_empty() {
+        error!("No AI providers configured, using LocalProvider");
+        providers.push(Box::new(LocalProvider));
+    }
+
+    let llm_manager = Arc::new(LLMManager::new(providers, event_bus.clone(), Arc::new(config.clone())));
+    context_manager.set_llm_manager(llm_manager.clone());
+    let context_manager = Arc::new(context_manager);
+
+    Ok((llm_manager, artifact_manager, context_manager))
+}
+
+async fn run_review(prompt: String, config: Config, event_bus: Arc<EventBus>) -> Result<()> {
+    let (llm_manager, artifact_manager, context_manager) =
+        setup_managers(&config, event_bus.clone()).await?;
+
+    let ctx_id = context_manager.create_context(std::collections::HashMap::new()).await;
+
+    let base_prompt = "You are a senior engineer performing a comprehensive code review of the current project. Provide actionable recommendations.";
+    let final_prompt = if prompt.is_empty() {
+        base_prompt.to_string()
+    } else {
+        format!("{}\n\nAdditional instructions: {}", base_prompt, prompt)
+    };
+
+    event_bus
+        .emit(Event::ExecutionStarted {
+            environment: "review".to_string(),
+        })
+        .await?;
+
+    let review_text = llm_manager.send_prompt(&final_prompt).await?;
+
+    artifact_manager
+        .create_artifact(
+            "code_review".to_string(),
+            ArtifactType::Documentation,
+            review_text.clone(),
+            std::collections::HashMap::new(),
+        )
+        .await?;
+
+    println!("{}", review_text);
+
+    event_bus
+        .emit(Event::TaskCompleted {
+            task_id: "review".to_string(),
+            result: "Success".to_string(),
+        })
+        .await?;
+
+    if config.execution.cleanup_on_exit {
+        artifact_manager.cleanup().await?;
+    }
+
+    Ok(())
+}
+
+async fn run_docs(prompt: String, config: Config, event_bus: Arc<EventBus>) -> Result<()> {
+    let (llm_manager, artifact_manager, context_manager) =
+        setup_managers(&config, event_bus.clone()).await?;
+
+    let ctx_id = context_manager.create_context(std::collections::HashMap::new()).await;
+
+    let base_prompt = "Generate comprehensive documentation for the current codebase. Place outputs in the docs/ directory.";
+    let final_prompt = if prompt.is_empty() {
+        base_prompt.to_string()
+    } else {
+        format!("{}\n\nAdditional instructions: {}", base_prompt, prompt)
+    };
+
+    event_bus
+        .emit(Event::ExecutionStarted {
+            environment: "docs".to_string(),
+        })
+        .await?;
+
+    let doc_text = llm_manager.send_prompt(&final_prompt).await?;
+
+    artifact_manager
+        .create_artifact(
+            "docs/overview".to_string(),
+            ArtifactType::Documentation,
+            doc_text.clone(),
+            std::collections::HashMap::new(),
+        )
+        .await?;
+
+    println!("{}", doc_text);
+
+    event_bus
+        .emit(Event::TaskCompleted {
+            task_id: "docs".to_string(),
+            result: "Success".to_string(),
+        })
+        .await?;
+
+    if config.execution.cleanup_on_exit {
+        artifact_manager.cleanup().await?;
+    }
+
+    Ok(())
+}
+
+async fn run_security(prompt: String, config: Config, event_bus: Arc<EventBus>) -> Result<()> {
+    let (llm_manager, artifact_manager, context_manager) =
+        setup_managers(&config, event_bus.clone()).await?;
+
+    let ctx_id = context_manager.create_context(std::collections::HashMap::new()).await;
+
+    let base_prompt = "Perform a security-focused review of the current project. Identify vulnerabilities and areas of concern.";
+    let final_prompt = if prompt.is_empty() {
+        base_prompt.to_string()
+    } else {
+        format!("{}\n\nAdditional instructions: {}", base_prompt, prompt)
+    };
+
+    event_bus
+        .emit(Event::ExecutionStarted {
+            environment: "security".to_string(),
+        })
+        .await?;
+
+    let sec_text = llm_manager.send_prompt(&final_prompt).await?;
+
+    artifact_manager
+        .create_artifact(
+            "security".to_string(),
+            ArtifactType::Documentation,
+            sec_text.clone(),
+            std::collections::HashMap::new(),
+        )
+        .await?;
+
+    println!("{}", sec_text);
+
+    event_bus
+        .emit(Event::TaskCompleted {
+            task_id: "security".to_string(),
+            result: "Success".to_string(),
+        })
+        .await?;
+
+    if config.execution.cleanup_on_exit {
+        artifact_manager.cleanup().await?;
+    }
+
+    Ok(())
 }

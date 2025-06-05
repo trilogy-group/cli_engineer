@@ -1,6 +1,6 @@
 # cli_engineer
 
-An experimental autonomous CLI coding agent written in Rust. It features pluggable LLM providers, task interpretation, planning, execution, review and an agentic loop.
+Agentic CLI for software engineering automation. It features pluggable LLM providers, task interpretation, planning, execution, review and an agentic loop.
 
 ## Developer Setup
 
