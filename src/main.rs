@@ -327,7 +327,7 @@ async fn run_review(prompt: String, config: Config, event_bus: Arc<EventBus>) ->
     let (llm_manager, artifact_manager, context_manager) =
         setup_managers(&config, event_bus.clone()).await?;
 
-    let ctx_id = context_manager.create_context(std::collections::HashMap::new()).await;
+    let _ctx_id = context_manager.create_context(std::collections::HashMap::new()).await;
 
     let base_prompt = "You are a senior engineer performing a comprehensive code review of the current project. Provide actionable recommendations.";
     let final_prompt = if prompt.is_empty() {
@@ -373,7 +373,7 @@ async fn run_docs(prompt: String, config: Config, event_bus: Arc<EventBus>) -> R
     let (llm_manager, artifact_manager, context_manager) =
         setup_managers(&config, event_bus.clone()).await?;
 
-    let ctx_id = context_manager.create_context(std::collections::HashMap::new()).await;
+    let _ctx_id = context_manager.create_context(std::collections::HashMap::new()).await;
 
     let base_prompt = "Generate comprehensive documentation for the current codebase. Place outputs in the docs/ directory.";
     let final_prompt = if prompt.is_empty() {
@@ -419,7 +419,7 @@ async fn run_security(prompt: String, config: Config, event_bus: Arc<EventBus>) 
     let (llm_manager, artifact_manager, context_manager) =
         setup_managers(&config, event_bus.clone()).await?;
 
-    let ctx_id = context_manager.create_context(std::collections::HashMap::new()).await;
+    let _ctx_id = context_manager.create_context(std::collections::HashMap::new()).await;
 
     let base_prompt = "Perform a security-focused review of the current project. Identify vulnerabilities and areas of concern.";
     let final_prompt = if prompt.is_empty() {
