@@ -4,30 +4,76 @@
 # - OPENROUTER_API_KEY for OpenRouter
 # - OPENAI_API_KEY for OpenAI
 # - ANTHROPIC_API_KEY for Anthropic
+# - Ollama runs locally and doesn't require an API key
 
 [ai_providers.openai]
 enabled = false
-model = "gpt-4.1"
-temperature = 1
-cost_per_1m_input_tokens = 2.000
-cost_per_1m_output_tokens = 8.000
-max_tokens = 1047576
+# PREMIUM MODELS (requires OPENAI_API_KEY):
+# gpt-4o-mini     - $0.15/$0.60 per 1M tokens, fast and efficient
+# gpt-4o          - $2.50/$10.00 per 1M tokens, most capable
+# gpt-4-turbo     - $10.00/$30.00 per 1M tokens, high performance
+model = "gpt-4o-mini"
+temperature = 0.7
+cost_per_1m_input_tokens = 0.150
+cost_per_1m_output_tokens = 0.600
+max_tokens = 128000
 
 [ai_providers.anthropic]
 enabled = true
-model = "claude-sonnet-4-0"
-temperature = 1
+# CLAUDE MODELS (requires ANTHROPIC_API_KEY):
+# claude-3-5-haiku-20241022   - $1.00/$5.00 per 1M tokens, fast
+# claude-3-5-sonnet-20241022  - $3.00/$15.00 per 1M tokens, balanced (RECOMMENDED)
+# claude-3-opus-20240229      - $15.00/$75.00 per 1M tokens, most capable
+model = "claude-3-5-sonnet-20241022"
+temperature = 0.7
 cost_per_1m_input_tokens = 3.00
 cost_per_1m_output_tokens = 15.00
 max_tokens = 200000
 
 [ai_providers.openrouter]
 enabled = false
+# COST-EFFECTIVE CLOUD OPTIONS:
+# deepseek/deepseek-r1-0528-qwen3-8b  - $0.06/$0.09 per 1M tokens, reasoning
+# qwen/qwen-2.5-coder-32b-instruct    - $0.18/$0.18 per 1M tokens, coding
+# microsoft/phi-4                     - $0.10/$0.10 per 1M tokens, efficient
+# google/gemma-2-9b-it                - $0.08/$0.08 per 1M tokens, balanced
 model = "deepseek/deepseek-r1-0528-qwen3-8b"
 temperature = 0.2
 cost_per_1m_input_tokens = 0.06
 cost_per_1m_output_tokens = 0.09
 max_tokens = 65536
+
+# Ollama - Local LLM inference (no API key required)
+# Install: curl -fsSL https://ollama.ai/install.sh | sh
+# Pull model: ollama pull <model_name>
+#
+# CONSUMER GPU RECOMMENDATIONS (4B-14B parameters):
+#
+# For 8GB VRAM (GTX 1070, RTX 3060):
+#   qwen3:4b, phi4-mini, gemma3:4b
+#
+# For 12GB VRAM (RTX 3060 Ti, RTX 4060 Ti):
+#   qwen3:8b, deepseek-r1:7b, qwen2.5-coder:7b
+#
+# For 16GB+ VRAM (RTX 3080, RTX 4070 Ti):
+#   qwen3:14b, gemma3:12b, deepseek-r1:8b
+
+[ai_providers.ollama]
+enabled = false
+# RECOMMENDED MODELS:
+# qwen3:4b        - 4B params, ~3GB VRAM, excellent general performance
+# qwen3:8b        - 8B params, ~6GB VRAM, best balance (RECOMMENDED)
+# qwen3:14b       - 14B params, ~10GB VRAM, high performance
+# deepseek-r1:7b  - 7B params, ~5GB VRAM, advanced reasoning
+# deepseek-r1:8b  - 8B params, ~6GB VRAM, reasoning + general tasks
+# phi4-mini       - 3.8B params, ~3GB VRAM, efficient with long context
+# gemma3:4b       - 4B params, ~3GB VRAM, Google's compact model
+# gemma3:12b      - 12B params, ~8GB VRAM, stronger performance
+# qwen2.5-coder:7b - 7B params, ~5GB VRAM, specialized for coding
+model = "qwen3:8b"
+temperature = 0.7
+base_url = "http://localhost:11434"
+max_tokens = 8192
 
 [execution]
 # Maximum iterations for the agentic loop

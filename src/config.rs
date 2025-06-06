@@ -29,6 +29,9 @@ pub struct AIProvidersConfig {
 
     /// OpenRouter configuration
     pub openrouter: Option<ProviderConfig>,
+
+    /// Ollama configuration
+    pub ollama: Option<OllamaConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,6 +50,24 @@ pub struct ProviderConfig {
 
     /// Cost per 1M output tokens (in USD)
     pub cost_per_1m_output_tokens: Option<f32>,
+
+    /// Maximum context size in tokens
+    pub max_tokens: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OllamaConfig {
+    /// Whether this provider is enabled
+    pub enabled: bool,
+
+    /// Model to use
+    pub model: String,
+
+    /// Temperature setting
+    pub temperature: Option<f32>,
+
+    /// Base URL for Ollama server
+    pub base_url: Option<String>,
 
     /// Maximum context size in tokens
     pub max_tokens: Option<usize>,
@@ -181,6 +202,13 @@ impl Default for Config {
                     cost_per_1m_input_tokens: None,
                     cost_per_1m_output_tokens: None,
                     max_tokens: None,
+                }),
+                ollama: Some(OllamaConfig {
+                    enabled: false,
+                    model: "qwen3:8b".to_string(),
+                    temperature: Some(0.7),
+                    base_url: Some("http://localhost:11434".to_string()),
+                    max_tokens: Some(8192),
                 }),
             },
             execution: ExecutionConfig {

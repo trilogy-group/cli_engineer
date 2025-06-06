@@ -68,9 +68,52 @@ export ANTHROPIC_API_KEY="your-api-key-here"
 
 # For OpenRouter
 export OPENROUTER_API_KEY="your-api-key-here"
+
+# For Ollama (local inference - no API key needed)
+# Just install and run: curl -fsSL https://ollama.ai/install.sh | sh
+# Then pull a model: ollama pull llama3.2
 ```
 
 Add these to your shell profile (`.bashrc`, `.zshrc`, etc.) to persist them.
+
+### Setting up Ollama (Local LLM)
+
+Ollama allows you to run LLMs locally without API keys or internet connectivity:
+
+1. **Install Ollama**:
+   ```bash
+   curl -fsSL https://ollama.ai/install.sh | sh
+   ```
+
+2. **Pull a model** (choose based on your GPU):
+   ```bash
+   # For 8-12GB VRAM (recommended for most users)
+   ollama pull qwen3:8b        # Best balance of performance/size
+   ollama pull deepseek-r1:7b  # Advanced reasoning
+
+   # For 6-8GB VRAM (budget GPUs)
+   ollama pull qwen3:4b        # Compact but capable
+   ollama pull phi4-mini       # Efficient Microsoft model
+
+   # For 16GB+ VRAM (high-end GPUs)
+   ollama pull qwen3:14b       # Maximum performance
+   ollama pull gemma3:12b      # Google's strong model
+   ```
+
+3. **Start Ollama** (usually starts automatically):
+   ```bash
+   ollama serve
+   ```
+
+4. **Configure in cli_engineer.toml** - simply change `enabled = false` to `enabled = true`:
+   ```toml
+   [ai_providers.ollama]
+   enabled = true              # Just change this to true!
+   model = "qwen3:8b"         # Or change to your preferred model
+   temperature = 0.7
+   base_url = "http://localhost:11434"
+   max_tokens = 8192
+   ```
 
 ### Basic Configuration File
 
@@ -353,6 +396,7 @@ cli_engineer refactor "apply SOLID principles, improve error handling, and optim
 - **GPT-4**: Excellent for complex reasoning and code quality
 - **Claude 3**: Strong at following instructions and safe code generation
 - **DeepSeek**: Cost-effective option via OpenRouter
+- **Ollama Models**: Free local inference, privacy-focused, no API costs
 
 #### Cost Management
 

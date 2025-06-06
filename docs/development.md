@@ -71,7 +71,8 @@ src/
 │   ├── mod.rs
 │   ├── openai.rs
 │   ├── anthropic.rs
-│   └── openrouter.rs
+│   ├── openrouter.rs
+│   └── ollama.rs
 └── utils/               # Utility modules
     ├── logger.rs
     ├── logger_dashboard.rs
@@ -153,6 +154,11 @@ src/
 - Anthropic Claude API integration
 - Supports Claude-3 family models
 - Handles Anthropic-specific message formatting
+
+**providers/ollama.rs**
+- Ollama local LLM integration
+- Uses OpenAI-compatible API endpoints
+- Supports various open-source models (Llama, Mistral, etc.)
 
 **providers/openrouter.rs**
 - OpenRouter API integration for multiple model access

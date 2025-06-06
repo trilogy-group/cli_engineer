@@ -14,7 +14,7 @@ use context::{ContextConfig, ContextManager};
 use event_bus::{Event, EventBus, EventEmitter};
 use llm_manager::{LLMManager, LLMProvider, LocalProvider};
 use providers::{
-    anthropic::AnthropicProvider, openai::OpenAIProvider, openrouter::OpenRouterProvider,
+    anthropic::AnthropicProvider, ollama::OllamaProvider, openai::OpenAIProvider, openrouter::OpenRouterProvider,
 };
 use ui_dashboard::DashboardUI;
 use ui_enhanced::EnhancedUI;
@@ -521,6 +521,17 @@ async fn setup_managers(
             providers.push(Box::new(AnthropicProvider::new(
                 Some(anthropic_config.model.clone()),
                 anthropic_config.temperature,
+            )?));
+        }
+    }
+
+    if let Some(ollama_config) = &config.ai_providers.ollama {
+        if ollama_config.enabled {
+            providers.push(Box::new(OllamaProvider::new(
+                Some(ollama_config.model.clone()),
+                ollama_config.temperature,
+                ollama_config.base_url.clone(),
+                ollama_config.max_tokens,
             )?));
         }
     }

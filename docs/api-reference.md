@@ -8,6 +8,7 @@ This document provides comprehensive API documentation for all core modules in t
    - [OpenAI Provider](#openai-provider)
    - [Anthropic Provider](#anthropic-provider)
    - [OpenRouter Provider](#openrouter-provider)
+   - [Ollama Provider](#ollama-provider)
    - [LLM Manager](#llm-manager)
 2. [Core Modules](#core-modules)
    - [Planner](#planner)
@@ -178,6 +179,112 @@ let provider = OpenRouterProvider::new(
     Some(4096)
 )?;
 ```
+
+### Ollama Provider
+
+Provides access to local LLM models through Ollama's OpenAI-compatible API.
+
+#### Configuration
+
+```rust
+pub struct OllamaProvider {
+    model: String,
+    base_url: String,
+    client: Client,
+    max_tokens: usize,
+    temperature: f32,
+}
+```
+
+#### Methods
+
+##### `new(model: Option<String>, temperature: Option<f32>, base_url: Option<String>, max_tokens: Option<usize>) -> Result<Self>`
+
+Creates a new Ollama provider. No API key required as Ollama runs locally.
+
+**Parameters:**
+- `model`: Optional model name (defaults to "qwen3:8b")
+- `temperature`: Optional temperature (defaults to 0.7)
+- `base_url`: Optional base URL (defaults to "http://localhost:11434")
+- `max_tokens`: Optional max tokens (defaults to 8192)
+
+##### `with_config(model: String, base_url: String, max_tokens: usize) -> Self`
+
+Creates a provider with custom configuration.
+
+##### `with_temperature(self, temperature: f32) -> Self`
+
+Sets response generation temperature.
+
+##### `with_model(self, model: String) -> Self`
+
+Sets the model to use.
+
+##### `with_base_url(self, base_url: String) -> Self`
+
+Sets the Ollama server base URL.
+
+#### Supported Models
+
+**Recommended Models for Consumer GPUs (4B-14B parameters):**
+
+**General Purpose (Best Balance):**
+- `qwen3:4b` - 4B params, ~3GB VRAM, 128K context - Excellent for most tasks
+- `qwen3:8b` - 8B params, ~6GB VRAM, 128K context - **Recommended default**
+- `qwen3:14b` - 14B params, ~10GB VRAM, 128K context - High performance
+
+**Reasoning & Advanced Tasks:**
+- `deepseek-r1:7b` - 7B params, ~5GB VRAM, 131K context - Advanced reasoning
+- `deepseek-r1:8b` - 8B params, ~6GB VRAM, 131K context - Reasoning + general
+
+**Efficient & Compact:**
+- `phi4-mini` - 3.8B params, ~3GB VRAM, 128K context - Microsoft's efficient model
+- `gemma3:4b` - 4B params, ~3GB VRAM, 128K context - Google's compact model
+- `gemma3:12b` - 12B params, ~8GB VRAM, 128K context - Stronger performance
+
+**Code Specialized:**
+- `qwen2.5-coder:7b` - 7B params, ~5GB VRAM, 32K context - Code generation
+- `devstral` - 24B params, ~16GB VRAM, 128K context - **High-end GPUs only**
+
+**Hardware Requirements:**
+- **4B models**: 8GB+ VRAM (GTX 1070, RTX 3060, etc.)
+- **7-8B models**: 12GB+ VRAM (RTX 3060 Ti, RTX 4060 Ti, etc.)
+- **12-14B models**: 16GB+ VRAM (RTX 3080, RTX 4070 Ti, etc.)
+- **24B+ models**: 24GB+ VRAM (RTX 3090, RTX 4090, etc.)
+
+#### Example Usage
+
+```rust
+let provider = OllamaProvider::new(
+    Some("qwen3:8b".to_string()),
+    Some(0.7),
+    Some("http://localhost:11434".to_string()),
+    Some(8192)
+)?;
+
+let response = provider.send_prompt("Write a hello world function").await?;
+```
+
+#### Setup Requirements
+
+1. Install Ollama: `curl -fsSL https://ollama.ai/install.sh | sh`
+2. Pull a model: `ollama pull qwen3:8b` (recommended for most users)
+3. Start Ollama server: `ollama serve` (usually runs automatically)
+4. Configure in `cli_engineer.toml` - simply set `enabled = true`:
+
+```toml
+[ai_providers.ollama]
+enabled = true
+model = "qwen3:8b"  # Change to your preferred model
+temperature = 0.7
+base_url = "http://localhost:11434"
+max_tokens = 8192
+```
+
+**Quick Model Selection Guide:**
+- **8GB VRAM**: `qwen3:4b` or `phi4-mini`
+- **12GB VRAM**: `qwen3:8b` or `deepseek-r1:7b` (recommended)
+- **16GB+ VRAM**: `qwen3:14b` or `gemma3:12b`
 
 ### LLM Manager
 
@@ -941,6 +1048,13 @@ model = "gpt-4o"
 temperature = 0.7
 cost_per_1m_input_tokens = 2.0
 cost_per_1m_output_tokens = 8.0
+
+[ai_providers.ollama]
+enabled = true
+model = "qwen3:8b"
+temperature = 0.7
+base_url = "http://localhost:11434"
+max_tokens = 8192
 
 [execution]
 max_iterations = 10
