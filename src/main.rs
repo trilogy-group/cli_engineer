@@ -60,9 +60,9 @@ struct Args {
     /// Enable verbose logging
     #[arg(short, long)]
     verbose: bool,
-    /// Use dashboard UI (compact, non-scrolling display)
-    #[arg(short, long)]
-    dashboard: bool,
+    /// Disable dashboard UI (use simple text output instead)
+    #[arg(long)]
+    no_dashboard: bool,
     /// Configuration file path
     #[arg(short, long)]
     config: Option<String>,
@@ -86,16 +86,20 @@ async fn main() -> Result<()> {
     let event_bus = Arc::new(EventBus::new(1000));
 
     // Initialize logger
-    if args.dashboard {
+    if !args.no_dashboard {
         let level = if args.verbose {
             log::LevelFilter::Info
         } else {
             log::LevelFilter::Warn
         };
-        logger_dashboard::DashboardLogger::init(event_bus.clone(), level)
+        logger_dashboard::DashboardLogger::init_with_file(event_bus.clone(), level, args.verbose)
             .expect("Failed to init DashboardLogger");
     } else {
-        logger::init(args.verbose);
+        if args.verbose {
+            logger::init_with_file_logging(args.verbose);
+        } else {
+            logger::init(args.verbose);
+        }
     }
 
     // Load configuration
@@ -103,8 +107,8 @@ async fn main() -> Result<()> {
 
     let prompt = args.prompt.join(" ");
 
-    if args.dashboard {
-        // Use dashboard UI when --dashboard is specified
+    if !args.no_dashboard {
+        // Use dashboard UI when --no-dashboard is not specified
         let mut ui = DashboardUI::new(false);
         ui.set_event_bus(event_bus.clone());
 
@@ -198,7 +202,7 @@ async fn main() -> Result<()> {
             }
         }
     } else {
-        // Use enhanced UI for verbose mode or when dashboard is not requested
+        // Use simple text UI when --no-dashboard is specified
         let mut ui = if config.ui.colorful && config.ui.progress_bars && args.verbose {
             EnhancedUI::new(false)
         } else {

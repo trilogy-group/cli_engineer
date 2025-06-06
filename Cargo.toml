@@ -1,9 +1,10 @@
 [package]
 name = "cli_engineer"
-version = "0.6.0"
+version = "1.0.0"
 edition = "2024"
 description = "An experimental autonomous CLI coding agent"
 license = "MIT"
+homepage = "https://cli.engineer"
 repository = "https://github.com/trilogy-group/cli_engineer"
 authors = ["Leonardo Gonzalez <leonardo.gonzalez@trilogy.com>"]
 keywords = ["cli", "agent", "coding", "autonomous", "llm"]

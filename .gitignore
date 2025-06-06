@@ -26,5 +26,6 @@ research/
 .cli_engineer
 .windsurf
 .DS_Store
+*.log
 
 artifacts/*

@@ -9,9 +9,10 @@ Welcome to CLI Engineer, an autonomous software engineering agent that can inter
 3. [Usage](#usage)
 4. [Command Types](#command-types)
 5. [User Interface Options](#user-interface-options)
-6. [Examples and Workflows](#examples-and-workflows)
-7. [Advanced Configuration](#advanced-configuration)
-8. [Troubleshooting](#troubleshooting)
+6. [Logging and Session Management](#logging-and-session-management)
+7. [Examples and Workflows](#examples-and-workflows)
+8. [Advanced Configuration](#advanced-configuration)
+9. [Troubleshooting](#troubleshooting)
 
 ## Installation
 
@@ -121,8 +122,8 @@ cli_engineer [OPTIONS] <COMMAND> [PROMPT...]
 
 ### Options
 
-- `-v, --verbose`: Enable verbose logging
-- `-d, --dashboard`: Use dashboard UI (compact, non-scrolling display)
+- `-v, --verbose`: Enable verbose logging (creates timestamped log files)
+- `--no-dashboard`: Use simple text UI instead of dashboard (opt-out of default dashboard)
 - `-c, --config <FILE>`: Specify custom configuration file path
 
 ## Command Types
@@ -150,7 +151,7 @@ cli_engineer refactor  # Analyzes current directory automatically
 Perform comprehensive code reviews:
 
 ```bash
-cli_engineer review "focus on security vulnerabilities and performance"
+cli_engineer review "focus on code quality and performance"
 cli_engineer review  # General code review of current directory
 ```
 
@@ -168,33 +169,136 @@ cli_engineer docs  # Generate comprehensive project documentation
 Perform security audits:
 
 ```bash
-cli_engineer security "analyze for SQL injection vulnerabilities"
-cli_engineer security  # General security analysis
+cli_engineer -v security "analyze for SQL injection vulnerabilities"
+cli_engineer -v security  # General security analysis
 ```
 
 ## User Interface Options
 
-### Standard Terminal UI
+CLI Engineer offers two interface modes to suit different use cases and preferences.
 
-Default interface with colored output and progress indicators:
+### Dashboard UI (Default)
 
-```bash
-cli_engineer -v code "create a calculator app"
-```
-
-### Dashboard UI
-
-Compact, non-scrolling interface ideal for monitoring:
+The dashboard provides a rich, interactive interface with real-time metrics and progress tracking. This is now the default experience:
 
 ```bash
-cli_engineer -v -d code "create a web scraper"
+# Dashboard UI (default - no flags needed)
+cli_engineer code "create a calculator app"
+
+# Dashboard UI with verbose logging (dual output)
+cli_engineer -v security "analyze for SQL injection vulnerabilities"
+# Or use general security analysis: cli_engineer -v security
+# Logs appear in dashboard AND saved to cli_engineer_20240605_143022.log
 ```
 
-Features:
-- Real-time metrics (API calls, costs, artifacts)
-- Live log display
-- Progress tracking
-- Clean, box-bordered layout
+**Dashboard Features:**
+- **Real-time Metrics**: API calls, costs, artifacts created, context usage
+- **Live Log Display**: Streaming log output with color coding
+- **Progress Tracking**: Phase progression and completion status
+- **Compact Layout**: Clean, box-bordered interface that doesn't scroll
+- **Dual Output**: With `-v` flag, logs appear in UI AND get saved to timestamped files
+
+### Simple Text Mode
+
+Traditional command-line interface for scripts, CI/CD, or minimal environments:
+
+```bash
+# Simple text interface (opt-out of dashboard)
+cli_engineer --no-dashboard code "create a web scraper"
+
+# Simple text with file logging
+cli_engineer --no-dashboard -v review "analyze code quality"
+# Creates timestamped log file: cli_engineer_YYYYMMDD_HHMMSS.log
+```
+
+**Simple Text Features:**
+- **Traditional Output**: Standard terminal output with colors and progress bars
+- **Scrolling Logs**: Full log history remains visible in terminal
+- **CI/CD Friendly**: Works well in automated environments
+- **File Logging**: Verbose mode creates detailed session logs
+
+### Choosing the Right Interface
+
+**Use Dashboard UI when:**
+- Working interactively with real-time feedback
+- Monitoring resource usage (API costs, context limits)
+- Want a clean, organized view of progress
+- Need both screen display and file logging
+
+**Use Simple Text when:**
+- Running in CI/CD pipelines or scripts
+- Working in environments with limited terminal capabilities
+- Prefer traditional command-line experience
+- Need full scrollback history in terminal
+
+## Logging and Session Management
+
+CLI Engineer provides comprehensive logging capabilities to help you track sessions, debug issues, and maintain records of your work.
+
+### Verbose Mode File Logging
+
+The `-v` flag enables detailed logging with automatic file creation:
+
+```bash
+# Creates timestamped log file with all session details
+cli_engineer -v code "create a web application that shows the current weather in a specified city"
+# Output file: cli_engineer_20250605_195432.log
+```
+
+**Log File Features:**
+- **Timestamped Filenames**: `cli_engineer_YYYYMMDD_HHMMSS.log`
+- **Session Headers**: Clear start time and session information
+- **Detailed Logging**: All API calls, responses, decisions, and file operations
+- **Structured Format**: Timestamped entries with log levels
+
+### Dual Output Mode
+
+With dashboard UI + verbose mode, logs appear in both places simultaneously:
+
+```bash
+# Best of both worlds: real-time dashboard + persistent file logging
+cli_engineer -v security "analyze authentication mechanisms"
+```
+
+**Benefits:**
+- **Live Monitoring**: See progress and logs in real-time dashboard
+- **Persistent Records**: Complete session saved to timestamped file
+- **No Trade-offs**: Full logging functionality in both outputs
+- **Enhanced Debugging**: Dashboard for immediate feedback, files for detailed analysis
+
+### Log File Contents
+
+Verbose log files contain comprehensive session information:
+
+```
+=== CLI Engineer Session Started: 2025-06-05 19:54:32 UTC ===
+
+19:54:32 [INFO] Verbose logging enabled. Session details will be logged to: cli_engineer_20250605_195432.log
+19:54:32 [INFO] Added src/main.rs to context (20194 bytes)
+19:54:33 [INFO] Starting agentic loop for input: analyze authentication mechanisms
+19:54:33 [INFO] Creating plan for task...
+19:54:34 [INFO] Plan created with 3 steps, complexity: Moderate
+```
+
+### Best Practices
+
+**For Development Work:**
+```bash
+# Use dashboard + file logging for interactive development
+cli_engineer -v code "create a web application that shows the current weather in a specified city"
+```
+
+**For CI/CD Integration:**
+```bash
+# Use simple text + file logging for automated environments
+cli_engineer --no-dashboard -v docs "generate API documentation"
+```
+
+**For Quick Tasks:**
+```bash
+# Use dashboard only for quick, non-critical tasks
+cli_engineer review "quick code review"
+```
 
 ## Examples and Workflows
 
@@ -226,7 +330,8 @@ cli_engineer docs "create user guides, API documentation, and developer setup in
 
 ```bash
 # Security analysis
-cli_engineer security "check for common vulnerabilities: SQL injection, XSS, authentication issues, and insecure dependencies"
+cli_engineer -v security "check for insecure dependencies"
+cli_engineer -v security  # General security analysis
 ```
 
 ### Example 5: Refactoring Session
