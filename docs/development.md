@@ -360,8 +360,8 @@ cargo audit
 # Run with verbose logging
 cargo run -- -v "test task"
 
-# Run with dashboard
-cargo run -- -v -d "test task"
+# Run with simple text UI (opt-out of dashboard)
+cargo run -- --no-dashboard "test task"
 ```
 
 ## Testing
