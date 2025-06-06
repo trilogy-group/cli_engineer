@@ -8,10 +8,7 @@ where
     F: std::future::Future<Output = Result<T>> + Send + 'static,
     T: Send + 'static,
 {
-    let handles: Vec<JoinHandle<Result<T>>> = futs
-        .into_iter()
-        .map(|f| tokio::spawn(f))
-        .collect();
+    let handles: Vec<JoinHandle<Result<T>>> = futs.into_iter().map(|f| tokio::spawn(f)).collect();
 
     let mut out = Vec::new();
     for handle in handles {

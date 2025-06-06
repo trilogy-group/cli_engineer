@@ -1,6 +1,6 @@
-use log::{Record, Metadata, SetLoggerError, LevelFilter};
+use crate::event_bus::{Event, EventBus};
+use log::{LevelFilter, Metadata, Record, SetLoggerError};
 use std::sync::Arc;
-use crate::event_bus::{EventBus, Event};
 use tokio;
 
 pub struct DashboardLogger {
@@ -16,12 +16,12 @@ impl log::Log for DashboardLogger {
     fn log(&self, record: &Record) {
         if self.enabled(record.metadata()) {
             let msg = format!("{}", record.args());
-            
+
             // Use tokio::spawn to handle the async emit
             let event_bus = self.event_bus.clone();
             let level = record.level().to_string();
             let message = msg.clone();
-            
+
             tokio::spawn(async move {
                 let _ = event_bus.emit(Event::LogLine { level, message }).await;
             });

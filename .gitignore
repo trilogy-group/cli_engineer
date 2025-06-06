@@ -23,4 +23,8 @@ target/
 research/
 *.pdf
 *.markdown
-#artifacts/*
+.cli_engineer
+.windsurf
+.DS_Store
+
+artifacts/*

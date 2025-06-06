@@ -11,7 +11,7 @@ model = "gpt-4.1"
 temperature = 1
 cost_per_1m_input_tokens = 2.000
 cost_per_1m_output_tokens = 8.000
-max_context_tokens = 1047576
+max_tokens = 1047576
 
 [ai_providers.anthropic]
 enabled = true
@@ -19,7 +19,7 @@ model = "claude-sonnet-4-0"
 temperature = 1
 cost_per_1m_input_tokens = 3.00
 cost_per_1m_output_tokens = 15.00
-max_context_tokens = 200000
+max_tokens = 200000
 
 [ai_providers.openrouter]
 enabled = false
@@ -27,7 +27,7 @@ model = "deepseek/deepseek-r1-0528-qwen3-8b"
 temperature = 0.2
 cost_per_1m_input_tokens = 0.06
 cost_per_1m_output_tokens = 0.09
-max_context_tokens = 65536
+max_tokens = 65536
 
 [execution]
 # Maximum iterations for the agentic loop

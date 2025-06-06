@@ -1,42 +1,41 @@
 use anyhow::Result;
-use log::{info, error};
-use std::sync::{Arc, Mutex};
 use clap::{Parser, ValueEnum};
-use uuid::Uuid;
-use tokio::time::Duration;
+use log::{error, info, warn};
+use std::sync::{Arc, Mutex};
 use tokio::sync::oneshot;
+use tokio::time::Duration;
+use uuid::Uuid;
+use walkdir::WalkDir;
 
-use llm_manager::{LLMProvider, LLMManager, LocalProvider};
 use agentic_loop::AgenticLoop;
-use artifact::{ArtifactManager, ArtifactType};
+use artifact::ArtifactManager;
 use config::Config;
-use event_bus::{EventBus, Event, EventEmitter};
-use context::{ContextManager, ContextConfig};
+use context::{ContextConfig, ContextManager};
+use event_bus::{Event, EventBus, EventEmitter};
+use llm_manager::{LLMManager, LLMProvider, LocalProvider};
 use providers::{
-    openai::OpenAIProvider,
-    anthropic::AnthropicProvider,
-    openrouter::OpenRouterProvider,
+    anthropic::AnthropicProvider, openai::OpenAIProvider, openrouter::OpenRouterProvider,
 };
-use ui_enhanced::EnhancedUI;
 use ui_dashboard::DashboardUI;
+use ui_enhanced::EnhancedUI;
 mod logger_dashboard;
 
-mod llm_manager;
-mod interpreter;
-mod planner;
-mod executor;
-mod reviewer;
 mod agentic_loop;
-mod concurrency;
-mod ui_enhanced;
-mod ui_dashboard;
-mod logger;
-mod config;
-mod event_bus;
-mod providers;
 mod artifact;
+mod concurrency;
+mod config;
 mod context;
+mod event_bus;
+mod executor;
+mod interpreter;
 mod iteration_context;
+mod llm_manager;
+mod logger;
+mod planner;
+mod providers;
+mod reviewer;
+mod ui_dashboard;
+mod ui_enhanced;
 
 #[derive(ValueEnum, Debug, Clone)]
 enum CommandKind {
@@ -79,24 +78,29 @@ struct Args {
 async fn main() -> Result<()> {
     // Load environment variables
     dotenv::dotenv().ok();
-    
+
     // Parse command line arguments
     let args = Args::parse();
-    
+
     // Create event bus
     let event_bus = Arc::new(EventBus::new(1000));
 
     // Initialize logger
     if args.dashboard {
-        let level = if args.verbose { log::LevelFilter::Info } else { log::LevelFilter::Warn };
-        logger_dashboard::DashboardLogger::init(event_bus.clone(), level).expect("Failed to init DashboardLogger");
+        let level = if args.verbose {
+            log::LevelFilter::Info
+        } else {
+            log::LevelFilter::Warn
+        };
+        logger_dashboard::DashboardLogger::init(event_bus.clone(), level)
+            .expect("Failed to init DashboardLogger");
     } else {
         logger::init(args.verbose);
     }
-    
+
     // Load configuration
-    let config = Config::load(&args.config)?;
-    
+    let config = Arc::new(Config::load(&args.config)?);
+
     let prompt = args.prompt.join(" ");
 
     if args.dashboard {
@@ -131,20 +135,48 @@ async fn main() -> Result<()> {
                 }
             }
         });
-        
+
         let result = match args.command {
-            CommandKind::Code => run_with_ui(prompt.clone(), config, event_bus.clone()).await,
+            CommandKind::Code => run_with_ui(prompt.clone(), config.clone(), event_bus.clone(), false, args.command).await,
             CommandKind::Refactor => {
                 let p = if prompt.is_empty() {
                     "Analyze the current directory and perform recommended refactoring.".to_string()
                 } else {
                     prompt.clone()
                 };
-                run_with_ui(format!("Refactor codebase. {}", p), config, event_bus.clone()).await
+                run_with_ui(
+                    format!("Refactor codebase. {}", p),
+                    config.clone(),
+                    event_bus.clone(),
+                    true,
+                    args.command,
+                )
+                .await
             }
-            CommandKind::Review => run_review(prompt.clone(), config, event_bus.clone()).await,
-            CommandKind::Docs => run_docs(prompt.clone(), config, event_bus.clone()).await,
-            CommandKind::Security => run_security(prompt.clone(), config, event_bus.clone()).await,
+            CommandKind::Review => {
+                let p = if prompt.is_empty() {
+                    "ANALYSIS ONLY: Review the codebase files and create a comprehensive code review report. DO NOT generate, modify, or create any source code files. ONLY analyze existing code and document your findings, suggestions, and recommendations in code_review.md. Focus on code quality, best practices, potential issues, and improvement opportunities.".to_string()
+                } else {
+                    format!("ANALYSIS ONLY: Review the codebase with focus on: {}. DO NOT generate, modify, or create any source code files. ONLY analyze existing code and document your findings in code_review.md", prompt)
+                };
+                run_with_ui(p, config.clone(), event_bus.clone(), true, args.command).await
+            }
+            CommandKind::Docs => {
+                let p = if prompt.is_empty() {
+                    "Generate comprehensive documentation for the codebase. Create documentation files in a docs/ directory.".to_string()
+                } else {
+                    format!("Generate documentation for the codebase with these instructions: {}. Create documentation files in a docs/ directory.", prompt)
+                };
+                run_with_ui(p, config.clone(), event_bus.clone(), true, args.command).await
+            }
+            CommandKind::Security => {
+                let p = if prompt.is_empty() {
+                    "SECURITY ANALYSIS ONLY: Perform a comprehensive security analysis of the codebase. DO NOT generate, modify, or create any source code files. ONLY analyze existing code for vulnerabilities, security issues, and best practice violations. Document your findings, risk assessments, and security recommendations in security_report.md.".to_string()
+                } else {
+                    format!("SECURITY ANALYSIS ONLY: Perform a security analysis of the codebase focusing on: {}. DO NOT generate, modify, or create any source code files. ONLY analyze existing code and document your security findings in security_report.md", prompt)
+                };
+                run_with_ui(p, config.clone(), event_bus.clone(), true, args.command).await
+            }
         };
 
         match result {
@@ -173,10 +205,10 @@ async fn main() -> Result<()> {
             EnhancedUI::new(true) // headless mode
         };
         ui.set_event_bus(event_bus.clone());
-        
+
         // Start UI
         ui.start()?;
-        
+
         if matches!(args.command, CommandKind::Code) && prompt.is_empty() {
             ui.display_error("PROMPT required for code command").await?;
             ui.finish();
@@ -184,18 +216,46 @@ async fn main() -> Result<()> {
         }
 
         let result = match args.command {
-            CommandKind::Code => run_with_ui(prompt.clone(), config, event_bus.clone()).await,
+            CommandKind::Code => run_with_ui(prompt.clone(), config.clone(), event_bus.clone(), false, args.command).await,
             CommandKind::Refactor => {
                 let p = if prompt.is_empty() {
                     "Analyze the current directory and perform recommended refactoring.".to_string()
                 } else {
                     prompt.clone()
                 };
-                run_with_ui(format!("Refactor codebase. {}", p), config, event_bus.clone()).await
+                run_with_ui(
+                    format!("Refactor codebase. {}", p),
+                    config.clone(),
+                    event_bus.clone(),
+                    true,
+                    args.command,
+                )
+                .await
             }
-            CommandKind::Review => run_review(prompt.clone(), config, event_bus.clone()).await,
-            CommandKind::Docs => run_docs(prompt.clone(), config, event_bus.clone()).await,
-            CommandKind::Security => run_security(prompt.clone(), config, event_bus.clone()).await,
+            CommandKind::Review => {
+                let p = if prompt.is_empty() {
+                    "ANALYSIS ONLY: Review the codebase files and create a comprehensive code review report. DO NOT generate, modify, or create any source code files. ONLY analyze existing code and document your findings, suggestions, and recommendations in code_review.md. Focus on code quality, best practices, potential issues, and improvement opportunities.".to_string()
+                } else {
+                    format!("ANALYSIS ONLY: Review the codebase with focus on: {}. DO NOT generate, modify, or create any source code files. ONLY analyze existing code and document your findings in code_review.md", prompt)
+                };
+                run_with_ui(p, config.clone(), event_bus.clone(), true, args.command).await
+            }
+            CommandKind::Docs => {
+                let p = if prompt.is_empty() {
+                    "Generate comprehensive documentation for the codebase. Create documentation files in a docs/ directory.".to_string()
+                } else {
+                    format!("Generate documentation for the codebase with these instructions: {}. Create documentation files in a docs/ directory.", prompt)
+                };
+                run_with_ui(p, config.clone(), event_bus.clone(), true, args.command).await
+            }
+            CommandKind::Security => {
+                let p = if prompt.is_empty() {
+                    "SECURITY ANALYSIS ONLY: Perform a comprehensive security analysis of the codebase. DO NOT generate, modify, or create any source code files. ONLY analyze existing code for vulnerabilities, security issues, and best practice violations. Document your findings, risk assessments, and security recommendations in security_report.md.".to_string()
+                } else {
+                    format!("SECURITY ANALYSIS ONLY: Perform a security analysis of the codebase focusing on: {}. DO NOT generate, modify, or create any source code files. ONLY analyze existing code and document your security findings in security_report.md", prompt)
+                };
+                run_with_ui(p, config.clone(), event_bus.clone(), true, args.command).await
+            }
         };
 
         match result {
@@ -207,62 +267,202 @@ async fn main() -> Result<()> {
             }
         }
     }
-    
+
     Ok(())
 }
 
-async fn run_with_ui(command: String, config: Config, event_bus: Arc<EventBus>) -> Result<()> {
+async fn scan_and_populate_context(
+    context_manager: &ContextManager,
+    context_id: &str,
+    event_bus: Arc<EventBus>,
+) -> Result<(usize, String)> {
+    let _ = event_bus
+        .emit(Event::LogLine {
+            level: "INFO".to_string(),
+            message: "Scanning codebase for context...".to_string(),
+        })
+        .await;
+
+    let mut file_count = 0;
+    let mut file_list = Vec::new();
+    let current_dir = std::env::current_dir()?;
+    
+    // Define extensions to scan
+    let code_extensions = vec![
+        "rs", "py", "js", "ts", "java", "c", "cpp", "h", "hpp", "go", 
+        "rb", "php", "swift", "kt", "scala", "sh", "bash", "yaml", "yml",
+        "json", "toml", "xml", "html", "css", "jsx", "tsx", "vue", "svelte"
+    ];
+    
+    let config_files = vec![
+        "Cargo.toml", "package.json", "pom.xml", "build.gradle", 
+        "requirements.txt", "setup.py", "Gemfile", "composer.json",
+        "Makefile", "Dockerfile", ".gitignore", "README.md", "README"
+    ];
+
+    // Scan for code files
+    for entry in WalkDir::new(&current_dir)
+        .max_depth(5)
+        .into_iter()
+        .filter_entry(|e| {
+            let name = e.file_name().to_string_lossy();
+            !name.starts_with('.') && 
+            name != "target" && 
+            name != "node_modules" && 
+            name != "venv" &&
+            name != "artifacts" &&
+            name != "dist" &&
+            name != "build"
+        })
+    {
+        let entry = entry?;
+        let path = entry.path();
+        
+        if path.is_file() {
+            let file_name = path.file_name().unwrap().to_string_lossy();
+            let ext = path.extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("");
+            
+            // Check if it's a code file or config file
+            let should_include = code_extensions.contains(&ext) || 
+                                config_files.iter().any(|&cf| file_name == cf);
+            
+            if should_include {
+                // Skip very large files
+                let metadata = std::fs::metadata(&path)?;
+                if metadata.len() > 100_000 {
+                    info!("Skipping large file {:?} ({}KB)", path, metadata.len() / 1024);
+                    continue;
+                }
+                
+                match std::fs::read_to_string(&path) {
+                    Ok(content) => {
+                        let relative_path = path.strip_prefix(&current_dir)
+                            .unwrap_or(path)
+                            .to_string_lossy();
+                        
+                        let file_info = format!(
+                            "File: {}\n```{}\n{}\n```",
+                            relative_path,
+                            ext.to_string(),
+                            content
+                        );
+                        
+                        context_manager
+                            .add_message(context_id, "system".to_string(), file_info)
+                            .await?;
+                        
+                        file_count += 1;
+                        file_list.push(relative_path.to_string());
+                        info!("Added {} to context ({} bytes)", relative_path, content.len());
+                    }
+                    Err(e) => {
+                        warn!("Failed to read {:?}: {}", path, e);
+                    }
+                }
+            }
+        }
+    }
+
+    event_bus
+        .emit(Event::LogLine {
+            level: "INFO".to_string(),
+            message: format!("Scanning complete. Added {} files to context", file_count),
+        })
+        .await?;
+    
+    info!("Scan complete: added {} files to context", file_count);
+    
+    // Create a summary of what was scanned
+    let file_summary = if file_count > 0 {
+        format!("\n\nThe following {} files from this codebase have been loaded into context:\n{}", 
+                file_count, 
+                file_list.join("\n"))
+    } else {
+        String::new()
+    };
+    
+    Ok((file_count, file_summary))
+}
+
+async fn run_with_ui(prompt: String, config: Arc<Config>, event_bus: Arc<EventBus>, scan_codebase: bool, command: CommandKind) -> Result<()> {
     let (llm_manager, artifact_manager, context_manager) =
-        setup_managers(&config, event_bus.clone()).await?;
-    
+        setup_managers(&*config, event_bus.clone()).await?;
+
     let task_id = Uuid::new_v4().to_string();
-    event_bus.emit(Event::TaskStarted { task_id: task_id.clone(), description: command.clone() }).await?;
-    info!("Emitting TaskStarted event for task: {}", command);
-    
+    event_bus
+        .emit(Event::TaskStarted {
+            task_id: task_id.clone(),
+            description: prompt.clone(),
+        })
+        .await?;
+    info!("Emitting TaskStarted event for task: {}", prompt);
+
     // Create and run agentic loop
     let agentic_loop = AgenticLoop::new(
         llm_manager.clone(),
         config.execution.max_iterations,
-        event_bus.clone()
+        event_bus.clone(),
     )
     .with_context_manager(context_manager.clone())
-    .with_config(Arc::new(config.clone()))
-    .with_artifact_manager(artifact_manager.clone());
+    .with_config(config.clone())
+    .with_artifact_manager(artifact_manager.clone())
+    .with_command(command);
     info!("AgenticLoop instance created.");
-    let ctx_id = context_manager.create_context(std::collections::HashMap::new()).await;
+    let ctx_id = context_manager
+        .create_context(std::collections::HashMap::new())
+        .await;
     info!("Context created. Running agentic loop...");
-    
+
     // Emit execution started event
-    event_bus.emit(Event::ExecutionStarted { 
-        environment: "agentic_loop".to_string() 
-    }).await?;
-    
-    let result = agentic_loop.run(&command, &ctx_id).await;
+    event_bus
+        .emit(Event::LogLine {
+            level: "INFO".to_string(),
+            message: "Execution started".to_string(),
+        })
+        .await?;
+
+    // Scan and populate context if requested
+    let mut enhanced_prompt = prompt;
+    if scan_codebase {
+        let (file_count, file_summary) = scan_and_populate_context(&context_manager, &ctx_id, event_bus.clone()).await?;
+        if file_count > 0 {
+            // Append file summary to the prompt so the planner knows what files exist
+            enhanced_prompt = format!("{}{}", enhanced_prompt, file_summary);
+        }
+    }
+
+    let result = agentic_loop.run(&enhanced_prompt, &ctx_id).await;
     info!("Agentic loop completed");
-    
+
     match result {
         Ok(_) => {
             info!("Task completed successfully");
-            event_bus.emit(Event::TaskCompleted { 
-                task_id: task_id.clone(), 
-                result: "Success".to_string() 
-            }).await?;
+            event_bus
+                .emit(Event::TaskCompleted {
+                    task_id: task_id.clone(),
+                    result: "Success".to_string(),
+                })
+                .await?;
         }
         Err(ref e) => {
             error!("Task failed: {}", e);
-            event_bus.emit(Event::TaskFailed { 
-                task_id,
-                error: e.to_string()
-            }).await?;
+            event_bus
+                .emit(Event::TaskFailed {
+                    task_id,
+                    error: e.to_string(),
+                })
+                .await?;
         }
     }
-    
+
     // Cleanup artifacts if configured
     if config.execution.cleanup_on_exit {
         info!("Cleaning up artifacts...");
         artifact_manager.cleanup().await?;
     }
-    
+
     result.map(|_| ())
 }
 
@@ -281,7 +481,9 @@ async fn setup_managers(
         max_tokens: config.context.max_tokens,
         compression_threshold: config.context.compression_threshold,
         cache_enabled: config.context.cache_enabled,
-        cache_dir: std::env::current_dir()?.join(".cli_engineer").join("context_cache"),
+        cache_dir: std::env::current_dir()?
+            .join(".cli_engineer")
+            .join("context_cache"),
     };
 
     let mut context_manager = ContextManager::new(context_config)?;
@@ -292,15 +494,12 @@ async fn setup_managers(
 
     if let Some(openrouter_config) = &config.ai_providers.openrouter {
         if openrouter_config.enabled {
-            match OpenRouterProvider::new(
+            let provider = OpenRouterProvider::new(
                 Some(openrouter_config.model.clone()),
                 openrouter_config.temperature,
-            ) {
-                Ok(p) => {
-                    providers.push(Box::new(p));
-                }
-                Err(e) => error!("Failed to initialize OpenRouter provider: {}", e),
-            }
+                openrouter_config.max_tokens,
+            )?;
+            providers.push(Box::new(provider));
         }
     }
 
@@ -327,147 +526,13 @@ async fn setup_managers(
         providers.push(Box::new(LocalProvider));
     }
 
-    let llm_manager = Arc::new(LLMManager::new(providers, event_bus.clone(), Arc::new(config.clone())));
+    let llm_manager = Arc::new(LLMManager::new(
+        providers,
+        event_bus.clone(),
+        Arc::new(config.clone()),
+    ));
     context_manager.set_llm_manager(llm_manager.clone());
     let context_manager = Arc::new(context_manager);
 
     Ok((llm_manager, artifact_manager, context_manager))
-}
-
-async fn run_review(prompt: String, config: Config, event_bus: Arc<EventBus>) -> Result<()> {
-    let (llm_manager, artifact_manager, context_manager) =
-        setup_managers(&config, event_bus.clone()).await?;
-
-    let _ctx_id = context_manager.create_context(std::collections::HashMap::new()).await;
-
-    let base_prompt = "You are a senior engineer performing a comprehensive code review of the current project. Provide actionable recommendations.";
-    let final_prompt = if prompt.is_empty() {
-        base_prompt.to_string()
-    } else {
-        format!("{}\n\nAdditional instructions: {}", base_prompt, prompt)
-    };
-
-    event_bus
-        .emit(Event::ExecutionStarted {
-            environment: "review".to_string(),
-        })
-        .await?;
-
-    let review_text = llm_manager.send_prompt(&final_prompt).await?;
-
-    artifact_manager
-        .create_artifact(
-            "code_review".to_string(),
-            ArtifactType::Documentation,
-            review_text.clone(),
-            std::collections::HashMap::new(),
-        )
-        .await?;
-
-    println!("{}", review_text);
-
-    event_bus
-        .emit(Event::TaskCompleted {
-            task_id: "review".to_string(),
-            result: "Success".to_string(),
-        })
-        .await?;
-
-    if config.execution.cleanup_on_exit {
-        artifact_manager.cleanup().await?;
-    }
-
-    Ok(())
-}
-
-async fn run_docs(prompt: String, config: Config, event_bus: Arc<EventBus>) -> Result<()> {
-    let (llm_manager, artifact_manager, context_manager) =
-        setup_managers(&config, event_bus.clone()).await?;
-
-    let _ctx_id = context_manager.create_context(std::collections::HashMap::new()).await;
-
-    let base_prompt = "Generate comprehensive documentation for the current codebase. Place outputs in the docs/ directory.";
-    let final_prompt = if prompt.is_empty() {
-        base_prompt.to_string()
-    } else {
-        format!("{}\n\nAdditional instructions: {}", base_prompt, prompt)
-    };
-
-    event_bus
-        .emit(Event::ExecutionStarted {
-            environment: "docs".to_string(),
-        })
-        .await?;
-
-    let doc_text = llm_manager.send_prompt(&final_prompt).await?;
-
-    artifact_manager
-        .create_artifact(
-            "docs/overview".to_string(),
-            ArtifactType::Documentation,
-            doc_text.clone(),
-            std::collections::HashMap::new(),
-        )
-        .await?;
-
-    println!("{}", doc_text);
-
-    event_bus
-        .emit(Event::TaskCompleted {
-            task_id: "docs".to_string(),
-            result: "Success".to_string(),
-        })
-        .await?;
-
-    if config.execution.cleanup_on_exit {
-        artifact_manager.cleanup().await?;
-    }
-
-    Ok(())
-}
-
-async fn run_security(prompt: String, config: Config, event_bus: Arc<EventBus>) -> Result<()> {
-    let (llm_manager, artifact_manager, context_manager) =
-        setup_managers(&config, event_bus.clone()).await?;
-
-    let _ctx_id = context_manager.create_context(std::collections::HashMap::new()).await;
-
-    let base_prompt = "Perform a security-focused review of the current project. Identify vulnerabilities and areas of concern.";
-    let final_prompt = if prompt.is_empty() {
-        base_prompt.to_string()
-    } else {
-        format!("{}\n\nAdditional instructions: {}", base_prompt, prompt)
-    };
-
-    event_bus
-        .emit(Event::ExecutionStarted {
-            environment: "security".to_string(),
-        })
-        .await?;
-
-    let sec_text = llm_manager.send_prompt(&final_prompt).await?;
-
-    artifact_manager
-        .create_artifact(
-            "security".to_string(),
-            ArtifactType::Documentation,
-            sec_text.clone(),
-            std::collections::HashMap::new(),
-        )
-        .await?;
-
-    println!("{}", sec_text);
-
-    event_bus
-        .emit(Event::TaskCompleted {
-            task_id: "security".to_string(),
-            result: "Success".to_string(),
-        })
-        .await?;
-
-    if config.execution.cleanup_on_exit {
-        artifact_manager.cleanup().await?;
-    }
-
-    Ok(())
 }

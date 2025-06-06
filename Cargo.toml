@@ -1,6 +1,6 @@
 [package]
 name = "cli_engineer"
-version = "0.5.1"
+version = "0.6.0"
 edition = "2024"
 description = "An experimental autonomous CLI coding agent"
 license = "MIT"
@@ -44,3 +44,4 @@ crossterm = "0.28"
 futures = "0.3"
 uuid = { version = "1.11", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
+walkdir = "2.4"

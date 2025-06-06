@@ -1,7 +1,8 @@
+use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
-use anyhow::{Result, anyhow, Context};
 use serde::{Deserialize, Serialize};
 use std::env;
+use log::{info, warn};
 
 use crate::llm_manager::LLMProvider;
 
@@ -67,17 +68,17 @@ struct OpenAIErrorDetails {
 impl OpenAIProvider {
     /// Create a new OpenAI provider with default settings
     pub fn new(model: Option<String>, temperature: Option<f32>) -> Result<Self> {
-        let api_key = env::var("OPENAI_API_KEY")
-            .context("OPENAI_API_KEY environment variable not set")?;
+        let api_key =
+            env::var("OPENAI_API_KEY").context("OPENAI_API_KEY environment variable not set")?;
         Ok(Self {
             api_key,
             model: model.unwrap_or_else(|| "gpt-4.1".to_string()),
             base_url: "https://api.openai.com/v1".to_string(),
-            max_tokens: 4096,
+            max_tokens: 8192,
             temperature: temperature.unwrap_or(0.2),
         })
     }
-    
+
     /// Create a new OpenAI provider with custom configuration
     #[allow(dead_code)]
     pub fn with_config(api_key: String, model: String, max_tokens: usize) -> Self {
@@ -89,14 +90,14 @@ impl OpenAIProvider {
             temperature: 0.7,
         }
     }
-    
+
     /// Set custom base URL (for API-compatible services)
     #[allow(dead_code)]
     pub fn with_base_url(mut self, base_url: String) -> Self {
         self.base_url = base_url;
         self
     }
-    
+
     /// Set temperature for response generation
     #[allow(dead_code)]
     pub fn with_temperature(mut self, temperature: f32) -> Self {
@@ -110,7 +111,7 @@ impl LLMProvider for OpenAIProvider {
     fn name(&self) -> &str {
         "OpenAI"
     }
-    
+
     fn context_size(&self) -> usize {
         match self.model.as_str() {
             "gpt-4o" | "gpt-4o-mini" => 128_000,
@@ -120,20 +121,20 @@ impl LLMProvider for OpenAIProvider {
             _ => 4_096, // Conservative default
         }
     }
-    
+
     fn model_name(&self) -> &str {
         &self.model
     }
-    
+
     async fn send_prompt(&self, prompt: &str) -> Result<String> {
         let client = reqwest::Client::new();
-        
+
         // Check if model uses new max_completion_tokens parameter
-        let uses_new_param = self.model.starts_with("gpt-4-") 
+        let uses_new_param = self.model.starts_with("gpt-4-")
             || self.model.starts_with("gpt-4o")
             || self.model.starts_with("o1")
             || self.model == "o4-mini";
-        
+
         let request = OpenAIRequest {
             model: self.model.clone(),
             messages: vec![
@@ -146,11 +147,19 @@ impl LLMProvider for OpenAIProvider {
                     content: prompt.to_string(),
                 },
             ],
-            max_tokens: if uses_new_param { None } else { Some(self.max_tokens) },
-            max_completion_tokens: if uses_new_param { Some(self.max_tokens) } else { None },
+            max_tokens: if uses_new_param {
+                None
+            } else {
+                Some(self.max_tokens)
+            },
+            max_completion_tokens: if uses_new_param {
+                Some(self.max_tokens)
+            } else {
+                None
+            },
             temperature: self.temperature,
         };
-        
+
         let response = client
             .post(format!("{}/chat/completions", self.base_url))
             .header("Authorization", format!("Bearer {}", self.api_key))
@@ -159,10 +168,10 @@ impl LLMProvider for OpenAIProvider {
             .send()
             .await
             .context("Failed to send request to OpenAI")?;
-        
+
         let status = response.status();
         let response_text = response.text().await?;
-        
+
         if !status.is_success() {
             // Try to parse error response
             if let Ok(error_response) = serde_json::from_str::<OpenAIError>(&response_text) {
@@ -180,28 +189,42 @@ impl LLMProvider for OpenAIProvider {
                 ));
             }
         }
-        
-        let openai_response: OpenAIResponse = serde_json::from_str(&response_text)
-            .context("Failed to parse OpenAI response")?;
-        
-        let content = openai_response
+
+        let openai_response: OpenAIResponse =
+            serde_json::from_str(&response_text).context("Failed to parse OpenAI response")?;
+
+        let choice = openai_response
             .choices
             .first()
-            .ok_or_else(|| anyhow!("No response choices from OpenAI"))?
-            .message
-            .content
-            .clone();
-        
+            .ok_or_else(|| anyhow!("No response choices from OpenAI"))?;
+
+        let content = choice.message.content.clone();
+
+        // Check if response was truncated
+        if let Some(finish_reason) = &choice.finish_reason {
+            match finish_reason.as_str() {
+                "length" => {
+                    warn!("OpenAI response was truncated due to max_tokens limit ({}). Response may be incomplete.", self.max_tokens);
+                }
+                "stop" => {
+                    // Normal completion, no issues
+                }
+                other => {
+                    warn!("OpenAI response finished with reason: {}", other);
+                }
+            }
+        }
+
         // Log token usage if available
         if let Some(usage) = openai_response.usage {
-            log::info!(
+            info!(
                 "OpenAI token usage - Prompt: {}, Completion: {}, Total: {}",
                 usage.prompt_tokens,
                 usage.completion_tokens,
                 usage.total_tokens
             );
         }
-        
+
         Ok(content)
     }
 }
@@ -209,21 +232,15 @@ impl LLMProvider for OpenAIProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_context_sizes() {
-        let provider = OpenAIProvider::with_config(
-            "test_key".to_string(),
-            "gpt-4o".to_string(),
-            1000
-        );
+        let provider =
+            OpenAIProvider::with_config("test_key".to_string(), "gpt-4o".to_string(), 1000);
         assert_eq!(provider.context_size(), 128_000);
-        
-        let provider = OpenAIProvider::with_config(
-            "test_key".to_string(),
-            "gpt-3.5-turbo".to_string(),
-            1000
-        );
+
+        let provider =
+            OpenAIProvider::with_config("test_key".to_string(), "gpt-3.5-turbo".to_string(), 1000);
         assert_eq!(provider.context_size(), 16_385);
     }
 }

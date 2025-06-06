@@ -1,52 +1,124 @@
-use std::sync::Arc;
-use tokio::sync::{broadcast, RwLock};
-use serde::{Serialize, Deserialize};
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use serde_json;
+use std::sync::Arc;
+use tokio::sync::{RwLock, broadcast};
 
 /// Events that can be emitted by components
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Event {
-    LogLine { level: String, message: String },
+    LogLine {
+        level: String,
+        message: String,
+    },
     // Task-related events
-    TaskStarted { task_id: String, description: String },
-    TaskProgress { task_id: String, progress: f32, message: String },
-    TaskCompleted { task_id: String, result: String },
-    TaskFailed { task_id: String, error: String },
-    
+    TaskStarted {
+        task_id: String,
+        description: String,
+    },
+    TaskProgress {
+        task_id: String,
+        progress: f32,
+        message: String,
+    },
+    TaskCompleted {
+        task_id: String,
+        result: String,
+    },
+    TaskFailed {
+        task_id: String,
+        error: String,
+    },
+
     // Artifact events
-    ArtifactCreated { name: String, path: String, artifact_type: String },
-    ArtifactUpdated { name: String, path: String },
-    
+    ArtifactCreated {
+        name: String,
+        path: String,
+        artifact_type: String,
+    },
+    ArtifactUpdated {
+        name: String,
+        path: String,
+    },
+
     // Execution events
-    ExecutionStarted { environment: String },
-    ExecutionProgress { step: String, progress: f32 },
-    ExecutionCompleted { output: String },
-    DependencyInstalling { package: String },
-    DependencyInstalled { package: String },
-    
+    ExecutionStarted {
+        environment: String,
+    },
+    ExecutionProgress {
+        step: String,
+        progress: f32,
+    },
+    ExecutionCompleted {
+        output: String,
+    },
+    DependencyInstalling {
+        package: String,
+    },
+    DependencyInstalled {
+        package: String,
+    },
+
     // Context events
-    ContextUsage { used: usize, total: usize, percentage: f32 },
-    ContextCompression { original_size: usize, compressed_size: usize },
-    ContextUsageChanged { id: String, usage_percentage: f32, total_tokens: usize },
-    ContextCompressed { id: String, original_tokens: usize, compressed_tokens: usize },
-    ContextCleared { id: String },
-    ContextCreated { id: String },
-    ContextCached { id: String },
-    ContextLoaded { id: String },
-    
+    ContextUsage {
+        used: usize,
+        total: usize,
+        percentage: f32,
+    },
+    ContextCompression {
+        original_size: usize,
+        compressed_size: usize,
+    },
+    ContextUsageChanged {
+        id: String,
+        usage_percentage: f32,
+        total_tokens: usize,
+    },
+    ContextCompressed {
+        id: String,
+        original_tokens: usize,
+        compressed_tokens: usize,
+    },
+    ContextCleared {
+        id: String,
+    },
+    ContextCreated {
+        id: String,
+    },
+    ContextCached {
+        id: String,
+    },
+    ContextLoaded {
+        id: String,
+    },
+
     // API events
-    APICallStarted { provider: String, model: String },
-    APICallCompleted { provider: String, tokens: usize, cost: f32 },
-    APIError { provider: String, error: String },
-    
+    APICallStarted {
+        provider: String,
+        model: String,
+    },
+    APICallCompleted {
+        provider: String,
+        tokens: usize,
+        cost: f32,
+    },
+    APIError {
+        provider: String,
+        error: String,
+    },
+
     // System events
-    ConfigLoaded { path: Option<String> },
+    ConfigLoaded {
+        path: Option<String>,
+    },
     SystemReady,
     ShutdownRequested,
-    
+
     // Custom events
-    Custom { event_type: String, data: serde_json::Value },
+    Custom {
+        event_type: String,
+        data: serde_json::Value,
+    },
 }
 
 /// Event bus for component communication
@@ -76,17 +148,17 @@ impl EventBus {
             metrics: Arc::new(RwLock::new(Metrics::default())),
         }
     }
-    
+
     /// Subscribe to events
     pub fn subscribe(&self) -> broadcast::Receiver<Event> {
         self.sender.subscribe()
     }
-    
+
     /// Emit an event to all subscribers
     pub async fn emit(&self, event: Event) -> Result<()> {
         // Update metrics based on event
         self.update_metrics(&event).await;
-        
+
         // Send event to subscribers
         match self.sender.send(event) {
             Ok(_) => Ok(()),
@@ -96,16 +168,16 @@ impl EventBus {
             }
         }
     }
-    
+
     /// Get current metrics
     pub async fn get_metrics(&self) -> Metrics {
         self.metrics.read().await.clone()
     }
-    
+
     /// Update metrics based on event
     async fn update_metrics(&self, event: &Event) {
         let mut metrics = self.metrics.write().await;
-        
+
         match event {
             Event::APICallCompleted { tokens, cost, .. } => {
                 metrics.total_api_calls += 1;
@@ -133,7 +205,7 @@ impl EventBus {
 #[async_trait::async_trait]
 pub trait EventEmitter {
     fn set_event_bus(&mut self, bus: Arc<EventBus>);
-    
+
     #[allow(dead_code)]
     async fn emit_event(&self, event: Event) -> Result<()>;
 }
@@ -147,7 +219,7 @@ macro_rules! impl_event_emitter {
             fn set_event_bus(&mut self, bus: Arc<EventBus>) {
                 self.event_bus = Some(bus);
             }
-            
+
             async fn emit_event(&self, event: Event) -> Result<()> {
                 if let Some(bus) = &self.event_bus {
                     bus.emit(event).await
@@ -162,19 +234,19 @@ macro_rules! impl_event_emitter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_event_emission() {
         let bus = EventBus::new(100);
         let mut receiver = bus.subscribe();
-        
+
         let event = Event::TaskStarted {
             task_id: "test-1".to_string(),
             description: "Test task".to_string(),
         };
-        
+
         bus.emit(event.clone()).await.unwrap();
-        
+
         let received = receiver.recv().await.unwrap();
         match received {
             Event::TaskStarted { task_id, .. } => {
@@ -183,17 +255,19 @@ mod tests {
             _ => panic!("Wrong event type"),
         }
     }
-    
+
     #[tokio::test]
     async fn test_metrics_update() {
         let bus = EventBus::new(100);
-        
+
         bus.emit(Event::APICallCompleted {
             provider: "openai".to_string(),
             tokens: 100,
             cost: 0.01,
-        }).await.unwrap();
-        
+        })
+        .await
+        .unwrap();
+
         let metrics = bus.get_metrics().await;
         assert_eq!(metrics.total_api_calls, 1);
         assert_eq!(metrics.total_tokens, 100);

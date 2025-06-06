@@ -11,7 +11,9 @@ pub struct Task {
 pub struct Interpreter;
 
 impl Interpreter {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 
     /// Interpret user input into a `Task`.
     pub fn interpret(&self, input: &str) -> Result<Task> {
@@ -25,8 +27,8 @@ impl Interpreter {
         } else {
             format!("Complete task: {}", input)
         };
-        
-        Ok(Task { 
+
+        Ok(Task {
             description: input.to_string(),
             goal,
         })

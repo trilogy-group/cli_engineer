@@ -1,9 +1,9 @@
+use crate::config::Config;
+use crate::event_bus::{Event, EventBus, EventEmitter};
+use crate::impl_event_emitter;
 use anyhow::Result;
 use async_trait::async_trait;
 use std::sync::Arc;
-use crate::event_bus::{EventBus, Event, EventEmitter};
-use crate::impl_event_emitter;
-use crate::config::Config;
 
 /// Trait representing an LLM provider.
 #[async_trait]
@@ -29,9 +29,13 @@ pub struct LocalProvider;
 
 #[async_trait]
 impl LLMProvider for LocalProvider {
-    fn name(&self) -> &str { "local" }
+    fn name(&self) -> &str {
+        "local"
+    }
 
-    fn context_size(&self) -> usize { 4096 }
+    fn context_size(&self) -> usize {
+        4096
+    }
 
     async fn send_prompt(&self, prompt: &str) -> Result<String> {
         if let Some(task) = prompt.strip_prefix("Plan the following task:") {
@@ -66,7 +70,11 @@ pub struct LLMManager {
 
 impl LLMManager {
     /// Create a new manager with the given providers.
-    pub fn new(providers: Vec<Box<dyn LLMProvider>>, event_bus: Arc<EventBus>, config: Arc<Config>) -> Self {
+    pub fn new(
+        providers: Vec<Box<dyn LLMProvider>>,
+        event_bus: Arc<EventBus>,
+        config: Arc<Config>,
+    ) -> Self {
         Self {
             providers,
             event_bus: Some(event_bus),
@@ -94,20 +102,22 @@ impl LLMManager {
         if self.providers.is_empty() {
             return Err(anyhow::anyhow!("No providers available"));
         }
-        
+
         let provider = &self.providers[0];
-        
+
         // Emit API call started event
         if let Some(bus) = &self.event_bus {
-            let _ = bus.emit(Event::APICallStarted {
-                provider: provider.name().to_string(),
-                model: provider.model_name().to_string(),
-            }).await;
+            let _ = bus
+                .emit(Event::APICallStarted {
+                    provider: provider.name().to_string(),
+                    model: provider.model_name().to_string(),
+                })
+                .await;
         }
-        
+
         // Send prompt
         let result = provider.send_prompt(prompt).await;
-        
+
         // Emit completion or error event
         if let Some(bus) = &self.event_bus {
             match &result {
@@ -116,30 +126,39 @@ impl LLMManager {
                     let input_tokens = prompt.len() / 4;
                     let output_tokens = response.len() / 4;
                     let total_tokens = input_tokens + output_tokens;
-                    
+
                     // Calculate cost based on model configuration
                     let cost = self.calculate_cost(provider.name(), input_tokens, output_tokens);
-                    
-                    let _ = bus.emit(Event::APICallCompleted {
-                        provider: provider.name().to_string(),
-                        tokens: total_tokens,
-                        cost,
-                    }).await;
+
+                    let _ = bus
+                        .emit(Event::APICallCompleted {
+                            provider: provider.name().to_string(),
+                            tokens: total_tokens,
+                            cost,
+                        })
+                        .await;
                 }
                 Err(e) => {
-                    let _ = bus.emit(Event::APIError {
-                        provider: provider.name().to_string(),
-                        error: e.to_string(),
-                    }).await;
+                    let _ = bus
+                        .emit(Event::APIError {
+                            provider: provider.name().to_string(),
+                            error: e.to_string(),
+                        })
+                        .await;
                 }
             }
         }
-        
+
         result
     }
-    
+
     /// Calculate cost for API call based on provider configuration
-    fn calculate_cost(&self, provider_name: &str, input_tokens: usize, output_tokens: usize) -> f32 {
+    fn calculate_cost(
+        &self,
+        provider_name: &str,
+        input_tokens: usize,
+        output_tokens: usize,
+    ) -> f32 {
         if let Some(config) = &self.config {
             let provider_config = match provider_name.to_lowercase().as_str() {
                 "openai" => &config.ai_providers.openai,
@@ -147,10 +166,14 @@ impl LLMManager {
                 "openrouter" => &config.ai_providers.openrouter,
                 _ => return 0.0,
             };
-            
+
             if let Some(provider_config) = provider_config {
-                let input_cost = provider_config.cost_per_1m_input_tokens.unwrap_or(0.0) * (input_tokens as f32) / 1_000_000.0;
-                let output_cost = provider_config.cost_per_1m_output_tokens.unwrap_or(0.0) * (output_tokens as f32) / 1_000_000.0;
+                let input_cost = provider_config.cost_per_1m_input_tokens.unwrap_or(0.0)
+                    * (input_tokens as f32)
+                    / 1_000_000.0;
+                let output_cost = provider_config.cost_per_1m_output_tokens.unwrap_or(0.0)
+                    * (output_tokens as f32)
+                    / 1_000_000.0;
                 return input_cost + output_cost;
             }
         }
