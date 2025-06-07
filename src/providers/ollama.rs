@@ -1,71 +1,20 @@
-use anyhow::{Context, Result, anyhow};
-use async_trait::async_trait;
-use reqwest::Client;
-use serde::{Deserialize, Serialize};
-use log::warn;
-
+use anyhow::{anyhow, Result};
 use crate::llm_manager::LLMProvider;
-
-#[derive(Debug, Serialize)]
-struct OllamaRequest {
-    model: String,
-    messages: Vec<OllamaMessage>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    max_tokens: Option<usize>,
-    temperature: f32,
-    stream: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct OllamaMessage {
-    role: String,
-    content: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct OllamaResponse {
-    choices: Vec<OllamaChoice>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    usage: Option<OllamaUsage>,
-}
-
-#[derive(Debug, Deserialize)]
-struct OllamaChoice {
-    message: OllamaMessage,
-    finish_reason: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct OllamaUsage {
-    #[allow(dead_code)]
-    prompt_tokens: Option<usize>,
-    #[allow(dead_code)]
-    completion_tokens: Option<usize>,
-    #[allow(dead_code)]
-    total_tokens: Option<usize>,
-}
-
-#[derive(Debug, Deserialize)]
-struct OllamaError {
-    error: OllamaErrorDetails,
-}
-
-#[derive(Debug, Deserialize)]
-struct OllamaErrorDetails {
-    message: String,
-    #[serde(rename = "type")]
-    error_type: Option<String>,
-    code: Option<String>,
-}
+use crate::event_bus::{Event, EventBus};
+use log::{info};
+use std::sync::Arc;
+use tokio;
+use ollama_rs::{Ollama, generation::completion::request::GenerationRequest, generation::options::GenerationOptions};
+use futures::stream::StreamExt;
+use async_trait::async_trait;
 
 /// Ollama local LLM provider implementation
 pub struct OllamaProvider {
     model: String,
-    base_url: String,
-    client: Client,
+    client: Ollama,
     max_tokens: usize,
     temperature: f32,
+    event_bus: Option<Arc<EventBus>>,
 }
 
 impl OllamaProvider {
@@ -73,49 +22,19 @@ impl OllamaProvider {
     pub fn new(
         model: Option<String>,
         temperature: Option<f32>,
-        base_url: Option<String>,
         max_tokens: Option<usize>,
+        event_bus: Option<Arc<EventBus>>,
     ) -> Result<Self> {
+        let final_max_tokens = max_tokens.unwrap_or(128000);
+        info!("OllamaProvider initialized with max_tokens: {}", final_max_tokens);
+        
         Ok(Self {
             model: model.unwrap_or_else(|| "qwen3:8b".to_string()),
-            base_url: base_url.unwrap_or_else(|| "http://localhost:11434".to_string()),
-            client: Client::new(),
-            max_tokens: max_tokens.unwrap_or(8192),
+            client: Ollama::default(),
+            max_tokens: final_max_tokens,
             temperature: temperature.unwrap_or(0.7),
+            event_bus,
         })
-    }
-
-    /// Create a new Ollama provider with custom configuration
-    #[allow(dead_code)]
-    pub fn with_config(model: String, base_url: String, max_tokens: usize) -> Self {
-        Self {
-            model,
-            base_url,
-            client: Client::new(),
-            max_tokens,
-            temperature: 0.7,
-        }
-    }
-
-    /// Set temperature for response generation
-    #[allow(dead_code)]
-    pub fn with_temperature(mut self, temperature: f32) -> Self {
-        self.temperature = temperature;
-        self
-    }
-
-    /// Set model name
-    #[allow(dead_code)]
-    pub fn with_model(mut self, model: String) -> Self {
-        self.model = model;
-        self
-    }
-
-    /// Set base URL for Ollama server
-    #[allow(dead_code)]
-    pub fn with_base_url(mut self, base_url: String) -> Self {
-        self.base_url = base_url;
-        self
     }
 }
 
@@ -188,75 +107,136 @@ impl LLMProvider for OllamaProvider {
     }
 
     async fn send_prompt(&self, prompt: &str) -> Result<String> {
-        let request = OllamaRequest {
-            model: self.model.clone(),
-            messages: vec![
-                OllamaMessage {
-                    role: "system".to_string(),
-                    content: "You are a helpful AI assistant for coding tasks.".to_string(),
-                },
-                OllamaMessage {
-                    role: "user".to_string(),
-                    content: prompt.to_string(),
-                },
-            ],
-            max_tokens: Some(self.max_tokens),
-            temperature: self.temperature,
-            stream: false,
-        };
+        info!("Sending prompt to Ollama model '{}': {} characters", self.model, prompt.len());
+        
+        let mut request = GenerationRequest::new(self.model.clone(), prompt.to_string());
+        
+        // Set generation options including max_tokens and temperature
+        let options = GenerationOptions::default()
+            .num_predict(self.max_tokens as i32)
+            .temperature(self.temperature);
+        
+        request = request.options(options);
+        
+        let mut stream = self.client.generate_stream(request).await
+            .map_err(|e| anyhow!("Failed to start Ollama stream: {}", e))?;
+        
+        let mut full_response = String::new();
+        let mut in_thinking = false;
+        let mut thinking_buffer = String::new();
+        let mut sent_thinking_length = 0;
 
-        let response = self
-            .client
-            .post(format!("{}/v1/chat/completions", self.base_url))
-            .header("Content-Type", "application/json")
-            .json(&request)
-            .send()
-            .await
-            .context("Failed to send request to Ollama")?;
-
-        let status = response.status();
-        let response_text = response.text().await?;
-
-        if !status.is_success() {
-            // Try to parse error response
-            if let Ok(error_response) = serde_json::from_str::<OllamaError>(&response_text) {
-                return Err(anyhow!(
-                    "Ollama API error: {} (type: {:?}, code: {:?})",
-                    error_response.error.message,
-                    error_response.error.error_type,
-                    error_response.error.code
-                ));
-            } else {
-                return Err(anyhow!(
-                    "Ollama API error (status {}): {}",
-                    status,
-                    response_text
-                ));
-            }
-        }
-
-        let api_response: OllamaResponse = serde_json::from_str(&response_text)
-            .context("Failed to parse Ollama API response")?;
-
-        // Check if response was truncated
-        if let Some(choice) = api_response.choices.first() {
-            if let Some(finish_reason) = &choice.finish_reason {
-                match finish_reason.as_str() {
-                    "length" => {
-                        warn!("Ollama response was truncated due to max_tokens limit ({}). Response may be incomplete.", self.max_tokens);
-                    }
-                    "stop" => {
-                        // Normal completion, no issues
-                    }
-                    other => {
-                        warn!("Ollama response finished with reason: {}", other);
+        while let Some(chunk_result) = stream.next().await {
+            let chunk_responses = chunk_result
+                .map_err(|e| anyhow!("Error in stream chunk: {}", e))?;
+            
+            for chunk_response in chunk_responses {
+                let content = &chunk_response.response;
+                
+                full_response.push_str(content);
+                
+                // Handle thinking tags (no direct printing - only send events)
+                for part in content.split("<think>") {
+                    if let Some(think_content) = part.strip_suffix("</think>") {
+                        if !in_thinking {
+                            thinking_buffer.clear();
+                            sent_thinking_length = 0;
+                        }
+                        thinking_buffer.push_str(think_content);
+                        
+                        // Send complete reasoning trace (only new content)
+                        if let Some(bus) = &self.event_bus {
+                            let full_trace = thinking_buffer.trim().to_string();
+                            if !full_trace.is_empty() {
+                                let trace_to_send = if sent_thinking_length == 0 {
+                                    format!("🤔 {} ✨", full_trace)
+                                } else {
+                                    format!("{} ✨", full_trace)
+                                };
+                                tokio::spawn({
+                                    let bus = bus.clone();
+                                    async move {
+                                        let _ = bus.emit(Event::ReasoningTrace { message: trace_to_send }).await;
+                                    }
+                                });
+                            }
+                        }
+                        
+                        thinking_buffer.clear();
+                        sent_thinking_length = 0;
+                        in_thinking = false;
+                    } else if in_thinking {
+                        thinking_buffer.push_str(part);
+                        
+                        // Send new content periodically (only what's new since last send)
+                        if let Some(bus) = &self.event_bus {
+                            if thinking_buffer.len() > sent_thinking_length + 200 || 
+                               (part.contains('.') || part.contains('!') || part.contains('?')) && thinking_buffer.len() > sent_thinking_length {
+                                let new_content = &thinking_buffer[sent_thinking_length..];
+                                let cleaned_new = new_content.trim().to_string();
+                                if !cleaned_new.is_empty() {
+                                    let trace_to_send = if sent_thinking_length == 0 {
+                                        format!("🤔 {} ...", cleaned_new)
+                                    } else {
+                                        cleaned_new
+                                    };
+                                    sent_thinking_length = thinking_buffer.len();
+                                    tokio::spawn({
+                                        let bus = bus.clone();
+                                        async move {
+                                            let _ = bus.emit(Event::ReasoningTrace { message: trace_to_send }).await;
+                                        }
+                                    });
+                                }
+                            }
+                        }
+                    } else {
+                        // Regular content outside thinking - just accumulate, don't print
+                        if part.contains("<think>") {
+                            in_thinking = true;
+                            thinking_buffer.clear();
+                            sent_thinking_length = 0;
+                        }
                     }
                 }
+                
+                // Check for incomplete thinking tags to set state
+                if content.contains("<think>") && !content.contains("</think>") {
+                    in_thinking = true;
+                }
+                
+                // stdout().flush().await?;
             }
-
-            Ok(choice.message.content.clone())
-        } else {
-            Err(anyhow!("No choices in Ollama response"))
         }
+
+        // Send any remaining buffered thinking content
+        if !thinking_buffer.is_empty() {
+            let new_content = &thinking_buffer[sent_thinking_length..];
+            let cleaned_new = new_content.trim().to_string();
+            if !cleaned_new.is_empty() {
+                if let Some(bus) = &self.event_bus {
+                    let trace_to_send = if sent_thinking_length == 0 {
+                        format!("🤔 {} ...", cleaned_new)
+                    } else {
+                        cleaned_new
+                    };
+                    tokio::spawn({
+                        let bus = bus.clone();
+                        async move {
+                            let _ = bus.emit(Event::ReasoningTrace { message: trace_to_send }).await;
+                        }
+                    });
+                }
+            }
+        }
+
+        // println!(); // Final newline
+        info!("Ollama streaming complete. Response length: {}", full_response.len());
+
+        if full_response.is_empty() {
+            return Err(anyhow!("Empty response from Ollama"));
+        }
+
+        Ok(full_response)
     }
 }

@@ -498,41 +498,72 @@ async fn setup_managers(
 
     if let Some(openrouter_config) = &config.ai_providers.openrouter {
         if openrouter_config.enabled {
-            let provider = OpenRouterProvider::new(
+            match OpenRouterProvider::new(
                 Some(openrouter_config.model.clone()),
                 openrouter_config.temperature,
                 openrouter_config.max_tokens,
-            )?;
-            providers.push(Box::new(provider));
+            ) {
+                Ok(provider) => {
+                    info!("OpenRouter provider initialized successfully");
+                    providers.push(Box::new(provider));
+                }
+                Err(e) => {
+                    warn!("Failed to initialize OpenRouter provider: {}. Skipping.", e);
+                }
+            }
         }
     }
 
     if let Some(openai_config) = &config.ai_providers.openai {
         if openai_config.enabled {
-            providers.push(Box::new(OpenAIProvider::new(
+            match OpenAIProvider::new(
                 Some(openai_config.model.clone()),
                 openai_config.temperature,
-            )?));
+            ) {
+                Ok(provider) => {
+                    info!("OpenAI provider initialized successfully");
+                    providers.push(Box::new(provider));
+                }
+                Err(e) => {
+                    warn!("Failed to initialize OpenAI provider: {}. Skipping.", e);
+                }
+            }
         }
     }
 
     if let Some(anthropic_config) = &config.ai_providers.anthropic {
         if anthropic_config.enabled {
-            providers.push(Box::new(AnthropicProvider::new(
+            match AnthropicProvider::new(
                 Some(anthropic_config.model.clone()),
                 anthropic_config.temperature,
-            )?));
+            ) {
+                Ok(provider) => {
+                    info!("Anthropic provider initialized successfully");
+                    providers.push(Box::new(provider));
+                }
+                Err(e) => {
+                    warn!("Failed to initialize Anthropic provider: {}. Skipping.", e);
+                }
+            }
         }
     }
 
     if let Some(ollama_config) = &config.ai_providers.ollama {
         if ollama_config.enabled {
-            providers.push(Box::new(OllamaProvider::new(
+            match OllamaProvider::new(
                 Some(ollama_config.model.clone()),
                 ollama_config.temperature,
-                ollama_config.base_url.clone(),
                 ollama_config.max_tokens,
-            )?));
+                Some(event_bus.clone()),
+            ) {
+                Ok(provider) => {
+                    info!("Ollama provider initialized successfully");
+                    providers.push(Box::new(provider));
+                }
+                Err(e) => {
+                    warn!("Failed to initialize Ollama provider: {}. Skipping.", e);
+                }
+            }
         }
     }
 

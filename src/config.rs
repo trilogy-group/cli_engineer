@@ -182,7 +182,7 @@ impl Default for Config {
                 openai: Some(ProviderConfig {
                     enabled: true,
                     model: "o4-mini".to_string(),
-                    temperature: Some(0.7),
+                    temperature: Some(1.0), // OpenAI o4-mini only supports temperature 1.0
                     cost_per_1m_input_tokens: None,
                     cost_per_1m_output_tokens: None,
                     max_tokens: None,

@@ -3,7 +3,7 @@ use crate::impl_event_emitter;
 use anyhow::Result;
 use colored::*;
 use crossterm::{
-    cursor::{Hide, MoveTo, Show},
+    cursor::{MoveTo, Show},
     execute,
     terminal::{Clear, ClearType, size},
 };
@@ -15,13 +15,17 @@ use tokio;
 /// Dashboard UI that updates in-place without scrolling
 use std::collections::VecDeque;
 
+// Static mutex to prevent concurrent renders
+static RENDER_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub struct DashboardUI {
     headless: bool,
     event_bus: Option<Arc<EventBus>>,
     start_time: Instant,
     // Log buffer
     log_lines: Arc<Mutex<VecDeque<String>>>,
-
+    // Reasoning traces from LLM models
+    reasoning_traces: Arc<Mutex<VecDeque<String>>>,
     // Current status
     current_phase: Arc<Mutex<String>>,
     current_task: Arc<Mutex<String>>,
@@ -56,6 +60,7 @@ impl DashboardUI {
             context_usage: Arc::new(Mutex::new(0.0)),
             last_update: Instant::now(),
             log_lines: Arc::new(Mutex::new(VecDeque::with_capacity(30))),
+            reasoning_traces: Arc::new(Mutex::new(VecDeque::with_capacity(30))),
         }
     }
 
@@ -64,8 +69,8 @@ impl DashboardUI {
             return Ok(());
         }
 
-        // Hide cursor and clear screen
-        execute!(io::stdout(), Hide, Clear(ClearType::All))?;
+        // Clear entire screen and move to top
+        execute!(io::stdout(), Clear(ClearType::All), MoveTo(0, 0))?;
 
         // Start background event listener if event bus is available
         if let Some(event_bus) = &self.event_bus {
@@ -81,6 +86,7 @@ impl DashboardUI {
             let tasks_total = self.tasks_total.clone();
             let total_cost = self.total_cost.clone();
             let context_usage = self.context_usage.clone();
+            let reasoning_traces = self.reasoning_traces.clone();
 
             tokio::spawn(async move {
                 let mut event_receiver = receiver;
@@ -132,6 +138,15 @@ impl DashboardUI {
                         } => {
                             *context_usage.lock().unwrap() = usage_percentage;
                         }
+                        Event::ReasoningTrace { message } => {
+                            if !message.trim().is_empty() {
+                                let mut traces = reasoning_traces.lock().unwrap();
+                                if traces.len() >= 30 {
+                                    traces.pop_front();
+                                }
+                                traces.push_back(message);
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -177,12 +192,15 @@ impl DashboardUI {
             return Ok(());
         }
 
+        // Acquire the render mutex
+        let _lock = RENDER_MUTEX.lock().unwrap();
+
+        // Clear entire screen and move to top
+        execute!(io::stdout(), Clear(ClearType::All), MoveTo(0, 0))?;
+
         // Box width constants
         const _BOX_WIDTH: usize = 120;
         const CONTENT_WIDTH: usize = 118; // BOX_WIDTH - 2 (for borders)
-
-        // Clear and move to top
-        execute!(io::stdout(), MoveTo(0, 0))?;
 
         // Calculate elapsed time
         let elapsed = self.start_time.elapsed();
@@ -384,14 +402,23 @@ impl DashboardUI {
         println!("{}", "╠══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╣".bright_blue());
         io::stdout().flush()?;
 
-        // Log area
+        // Split log area into two sections: upper for logs, lower for reasoning traces
         let log_lines = if let Ok(guard) = self.log_lines.try_lock() {
             guard.clone()
         } else {
             std::collections::VecDeque::new()
         };
 
-        for log_line in log_lines.iter() {
+        let reasoning_traces = if let Ok(guard) = self.reasoning_traces.try_lock() {
+            guard.clone()
+        } else {
+            std::collections::VecDeque::new()
+        };
+
+        // Upper section: Regular logs (15 lines)
+        let log_section_lines = 15;
+        for (i, log_line) in log_lines.iter().enumerate() {
+            if i >= log_section_lines { break; }
             let max_log_len = CONTENT_WIDTH.saturating_sub(1); // Leave 1 space for right border
             let visible_log = strip_ansi_codes(log_line);
             let truncated_log = if visible_log.len() > max_log_len {
@@ -417,12 +444,67 @@ impl DashboardUI {
             io::stdout().flush()?;
         }
 
-        // Add blank lines to fill up the log area if needed
-        let total_log_lines: usize = 30;
-        let blank_lines = total_log_lines.saturating_sub(log_lines.len());
-        for _ in 0..blank_lines {
-            let log_padding = CONTENT_WIDTH - 1; // Leave 1 space for the content, not 2
+        // Fill remaining log lines
+        let used_log_lines = std::cmp::min(log_lines.len(), log_section_lines);
+        for _ in used_log_lines..log_section_lines {
+            let log_padding = CONTENT_WIDTH - 1;
             print!("{} {}", "║".bright_blue(), " ".repeat(log_padding));
+            println!("{}", "║".bright_blue());
+            io::stdout().flush()?;
+        }
+
+        println!("{}", "╠═══════════════════════════════════════════════ 🤔 Model Reasoning ═══════════════════════════════════════════════════╣".bright_blue());
+
+        // Lower section: Reasoning traces (15 lines)
+        let trace_section_lines = 15;
+        
+        // Calculate which traces to show (most recent ones)
+        let traces_to_show: Vec<_> = if reasoning_traces.len() > trace_section_lines {
+            reasoning_traces.iter()
+                .skip(reasoning_traces.len() - trace_section_lines)
+                .collect()
+        } else {
+            reasoning_traces.iter().collect()
+        };
+        
+        // Render the traces
+        let mut lines_rendered = 0;
+        for trace in traces_to_show.iter() {
+            if lines_rendered >= trace_section_lines { break; }
+            
+            // Split trace into lines and render each line
+            for line in trace.split('\n') {
+                if lines_rendered >= trace_section_lines { break; }
+                
+                //let max_trace_len = 110; // Wrap reasoning traces at 110 characters
+                let max_trace_len = CONTENT_WIDTH - 2; // +1 for the space after ║
+                let visible_line = strip_ansi_codes(line);
+                
+                // Wrap the line instead of truncating
+                let wrapped_lines = wrap_text(&visible_line, max_trace_len);
+                
+                for wrapped_line in wrapped_lines {
+                    if lines_rendered >= trace_section_lines { break; }
+                    
+                    let visual_width_wrapped = visual_width(&wrapped_line);
+                    let trace_padding = CONTENT_WIDTH.saturating_sub(visual_width_wrapped + 1); // +1 for the space after ║
+                    print!(
+                        "{} {}{}",
+                        "║".bright_blue(),
+                        wrapped_line.bright_black(), // Show reasoning traces in gray
+                        " ".repeat(trace_padding)
+                    );
+                    println!("{}", "║".bright_blue());
+                    io::stdout().flush()?;
+                    lines_rendered += 1;
+                }
+            }
+        }
+
+        // Fill remaining trace lines if we have fewer lines than allocated space
+        for _ in lines_rendered..trace_section_lines {
+            let trace_padding = CONTENT_WIDTH - 1;
+            print!("{} {}", "║".bright_blue(), " ".repeat(trace_padding));
             println!("{}", "║".bright_blue());
             io::stdout().flush()?;
         }
@@ -550,6 +632,15 @@ impl DashboardUI {
             } => {
                 *self.context_usage.lock().unwrap() = usage_percentage;
             }
+            Event::ReasoningTrace { message } => {
+                if !message.trim().is_empty() {
+                    let mut traces = self.reasoning_traces.lock().unwrap();
+                    if traces.len() >= 30 {
+                        traces.pop_front();
+                    }
+                    traces.push_back(message);
+                }
+            }
             _ => {}
         }
         Ok(())
@@ -585,4 +676,54 @@ fn strip_ansi_codes(s: &str) -> String {
         }
     }
     result
+}
+
+// Helper function to calculate visual width (accounting for emoji width)
+fn visual_width(s: &str) -> usize {
+    s.chars().map(|c| {
+        match c {
+            // Common emojis used in reasoning traces
+            '🤔' | '✨' | '🔍' | '💭' | '🧠' | '⚡' | '🎯' | '💡' => 2,
+            // Regular characters
+            _ => 1,
+        }
+    }).sum()
+}
+
+// Helper function to wrap text at word boundaries
+fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current_line = String::new();
+    let mut current_width = 0;
+
+    for word in text.split_whitespace() {
+        let word_visual_width = visual_width(word);
+        
+        // Check if adding this word would exceed the limit
+        if current_width + word_visual_width + (if current_line.is_empty() { 0 } else { 1 }) <= max_width {
+            if !current_line.is_empty() {
+                current_line.push(' ');
+                current_width += 1;
+            }
+            current_line.push_str(word);
+            current_width += word_visual_width;
+        } else {
+            // Start a new line
+            if !current_line.is_empty() {
+                lines.push(current_line);
+            }
+            current_line = word.to_string();
+            current_width = word_visual_width;
+        }
+    }
+    
+    if !current_line.is_empty() {
+        lines.push(current_line);
+    }
+    
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    
+    lines
 }
