@@ -4,37 +4,139 @@
 # - OPENROUTER_API_KEY for OpenRouter
 # - OPENAI_API_KEY for OpenAI
 # - ANTHROPIC_API_KEY for Anthropic
+# - Ollama runs locally and doesn't require an API key
 
+# Execution settings
+[execution]
+max_iterations = 8
+
+# UI settings  
+[ui]
+colorful = true
+progress_bars = true
+metrics = true
+output_format = "terminal"
+
+# Context settings
+[context]
+max_tokens = 100000
+compression_threshold = 0.6
+cache_enabled = true
+
+# AI PROVIDERS - First, set enabled = true on the provider you want to use.
+# Then, uncomment its model that you want to use!
+
+# OPENAI MODELS (require OPENAI_API_KEY):
 [ai_providers.openai]
-enabled = false
-model = "gpt-4.1"
-temperature = 1
-cost_per_1m_input_tokens = 2.000
-cost_per_1m_output_tokens = 8.000
-max_tokens = 1047576
-
-[ai_providers.anthropic]
 enabled = true
-model = "claude-sonnet-4-0"
 temperature = 1
+model = "gpt-4.1" # Flagship GPT model for coding tasks
+cost_per_1m_input_tokens = 2.00
+cost_per_1m_output_tokens = 8.00
+max_tokens = 128000
+
+# model = "gpt-o4-mini" # Faster, more affordable reasoning model
+# cost_per_1m_input_tokens = 1.10
+# cost_per_1m_output_tokens = 4.40
+# max_tokens = 128000
+
+# model = "gpt-o3" # Most powerful reasoning model
+# cost_per_1m_input_tokens = 10.00
+# cost_per_1m_output_tokens = 40.00
+# max_tokens = 128000
+
+# CLAUDE MODELS (requires ANTHROPIC_API_KEY):
+[ai_providers.anthropic]
+enabled = false
+temperature = 0.7
+model = "claude-sonnet-4-0" # Highly capable model
 cost_per_1m_input_tokens = 3.00
 cost_per_1m_output_tokens = 15.00
 max_tokens = 200000
 
+# model = "claude-opus-4-0" # Most capable model
+# cost_per_1m_input_tokens = 15.00
+# cost_per_1m_output_tokens = 75.00
+# max_tokens = 200000
+
+# COST-EFFECTIVE CLOUD OPTIONS (require OPENROUTER_API_KEY)
 [ai_providers.openrouter]
 enabled = false
-model = "deepseek/deepseek-r1-0528-qwen3-8b"
-temperature = 0.2
-cost_per_1m_input_tokens = 0.06
-cost_per_1m_output_tokens = 0.09
-max_tokens = 65536
+temperature = 1
+# deepseek/deepseek-r1-0528-qwen3-8b - Advanced reasoning in small, affordable model
+# model = "deepseek/deepseek-r1-0528-qwen3-8b"
+# cost_per_1m_input_tokens = 0.06
+# cost_per_1m_output_tokens = 0.09
+# max_tokens = 65536
 
-[execution]
-# Maximum iterations for the agentic loop
-max_iterations = 12
+# model = "inception/mercury-coder-small-beta" # - Lightning-fast, diffusion coding model
+# cost_per_1m_input_tokens = 0.25
+# cost_per_1m_output_tokens = 1.00
+# max_tokens = 32768
 
-# Enable parallel task execution
-parallel_enabled = true
+# model = "qwen/qwen3-235b-a22b" # - Powerful, affordable reasoning model
+# cost_per_1m_input_tokens = 0.13
+# cost_per_1m_output_tokens = 0.85
+# max_tokens = 41000
+
+# model = "microsoft/phi-4-reasoning-plus" # Efficient general purpose
+# cost_per_1m_input_tokens = 0.07
+# cost_per_1m_output_tokens = 0.35
+# max_tokens = 33000
+
+model = "google/gemini-2.5-pro-preview" # First-place positioning on the LMArena leaderboard
+cost_per_1m_input_tokens = 1.25
+cost_per_1m_output_tokens = 10.00
+max_tokens = 8192
+
+# Ollama - Local LLM inference (no API key required)
+# Install: curl -fsSL https://ollama.ai/install.sh | sh
+# Pull model: ollama pull <model_name>
+# Serve model: ollama run <model_name>
+#
+# CONSUMER GPU RECOMMENDATIONS (4B-14B parameters):
+#
+# For 8GB VRAM
+#   qwen3:4b, gemma3:4b
+#
+# For 12GB VRAM
+#   qwen3:8b, deepseek-r1:8b
+#
+# For 16GB+ VRAM
+#   qwen3:14b, gemma3:12b, phi4-14b
+
+# LOCAL MODELS (free, requires Ollama running locally)
+[ai_providers.ollama]
+enabled = false
+temperature = 0.7
+base_url = "http://localhost:11434"
+
+model = "qwen3:4b"
+max_tokens = 40000
+
+# RECOMMENDED MODELS:
+
+# model = "deepseek-r1:8b" # Updated R1 reasoning and Qwen 3 model: DeepSeek-R1-0528-Qwen3-8B
+# max_tokens = 128000
+
+# qwen3:14b - High performance, requires more VRAM
+# model = "qwen3:14b"
+# max_tokens = 40000
+
+# deepseek-r1:7b - Compact reasoning (older variant)
+# model = "deepseek-r1:7b"
+# max_tokens = 128000
+
+# model = "phi4-14b" - Microsoft's open source reasoning model
+# max_tokens = 16384
+
+# gemma3:4b - Google's compact model
+# model = "gemma3:4b"
+# max_tokens = 128000
+
+# gemma3:12b - Stronger performance
+# model = "gemma3:12b"
+# max_tokens = 128000
 
 # Artifact directory
 artifact_dir = "./artifacts"
@@ -48,25 +150,5 @@ cleanup_on_exit = false
 # Disable automatic git repository initialization unless explicitly requested
 disable_auto_git = true
 
-[ui]
-# Enable colorful terminal output
-colorful = true
-
-# Show progress bars
-progress_bars = true
-
-# Show real-time metrics
-metrics = true
-
-# Output format: "terminal", "json", or "plain"
-output_format = "terminal"
-
-[context]
-# Fallback maximum tokens (actual model context size is used when available)
-max_tokens = 65536
-
-# Compression threshold (0.0 to 1.0)
-compression_threshold = 0.4
-
-# Enable context caching
-cache_enabled = true
+# Parallel task execution
+parallel_enabled = true

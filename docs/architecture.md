@@ -64,6 +64,7 @@ pub struct LLMManager {
 - OpenAI (GPT-4, GPT-4 Turbo, etc.)
 - Anthropic (Claude models)
 - OpenRouter (Various models)
+- Ollama (Local LLM inference)
 - Local Provider (fallback for testing)
 
 ### 3. Task Interpreter (`interpreter.rs`)

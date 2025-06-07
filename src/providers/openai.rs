@@ -87,7 +87,7 @@ impl OpenAIProvider {
             model,
             base_url: "https://api.openai.com/v1".to_string(),
             max_tokens,
-            temperature: 0.7,
+            temperature: 1.0, // Use default temperature of 1.0 for OpenAI models
         }
     }
 

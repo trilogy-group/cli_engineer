@@ -114,6 +114,11 @@ pub enum Event {
     SystemReady,
     ShutdownRequested,
 
+    // LLM events
+    ReasoningTrace {
+        message: String,
+    },
+
     // Custom events
     Custom {
         event_type: String,

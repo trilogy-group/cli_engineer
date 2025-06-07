@@ -308,6 +308,14 @@ impl Reviewer {
                 .iter()
                 .filter(|i| matches!(i.severity, IssueSeverity::Critical))
                 .count();
+            
+            // Auto-determine ready_to_deploy if not explicitly set by LLM
+            // Ready to deploy if quality is good/excellent AND no critical issues
+            if !ready_to_deploy {
+                ready_to_deploy = matches!(overall_quality, QualityLevel::Good | QualityLevel::Excellent) 
+                    && critical_count == 0;
+            }
+            
             summary = format!(
                 "Review complete. Quality: {:?}. Found {} issues ({} critical). {}",
                 overall_quality,
