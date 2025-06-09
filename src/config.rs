@@ -30,6 +30,9 @@ pub struct AIProvidersConfig {
     /// OpenRouter configuration
     pub openrouter: Option<ProviderConfig>,
 
+    /// Gemini configuration
+    pub gemini: Option<ProviderConfig>,
+
     /// Ollama configuration
     pub ollama: Option<OllamaConfig>,
 }
@@ -198,6 +201,14 @@ impl Default for Config {
                 openrouter: Some(ProviderConfig {
                     enabled: false,
                     model: "deepseek/deepseek-r1-0528-qwen3-8b".to_string(),
+                    temperature: Some(0.2),
+                    cost_per_1m_input_tokens: None,
+                    cost_per_1m_output_tokens: None,
+                    max_tokens: None,
+                }),
+                gemini: Some(ProviderConfig {
+                    enabled: false,
+                    model: "gemini-1.5-flash-latest".to_string(),
                     temperature: Some(0.2),
                     cost_per_1m_input_tokens: None,
                     cost_per_1m_output_tokens: None,

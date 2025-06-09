@@ -14,7 +14,7 @@ use context::{ContextConfig, ContextManager};
 use event_bus::{Event, EventBus, EventEmitter};
 use llm_manager::{LLMManager, LLMProvider, LocalProvider};
 use providers::{
-    anthropic::AnthropicProvider, ollama::OllamaProvider, openai::OpenAIProvider, openrouter::OpenRouterProvider,
+    anthropic::AnthropicProvider, ollama::OllamaProvider, openai::OpenAIProvider, openrouter::OpenRouterProvider, gemini::GeminiProvider,
 };
 use ui_dashboard::DashboardUI;
 use ui_enhanced::EnhancedUI;
@@ -509,6 +509,23 @@ async fn setup_managers(
                 }
                 Err(e) => {
                     warn!("Failed to initialize OpenRouter provider: {}. Skipping.", e);
+                }
+            }
+        }
+    }
+
+    if let Some(gemini_config) = &config.ai_providers.gemini {
+        if gemini_config.enabled {
+            match GeminiProvider::new(
+                Some(gemini_config.model.clone()),
+                gemini_config.temperature,
+            ) {
+                Ok(provider) => {
+                    info!("Gemini provider initialized successfully");
+                    providers.push(Box::new(provider));
+                }
+                Err(e) => {
+                    warn!("Failed to initialize Gemini provider: {}. Skipping.", e);
                 }
             }
         }
