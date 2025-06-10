@@ -3,9 +3,11 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::env;
-use log::warn;
+use std::sync::Arc;
+use log::{info, warn};
 
 use crate::llm_manager::LLMProvider;
+use crate::event_bus::{Event, EventBus};
 
 #[derive(Debug, Serialize)]
 struct AnthropicRequest {
@@ -53,10 +55,13 @@ pub struct AnthropicProvider {
     client: Client,
     max_tokens: usize,
     temperature: f32,
+    event_bus: Option<Arc<EventBus>>,
+    cost_per_1m_input_tokens: f32,
+    cost_per_1m_output_tokens: f32,
 }
 
 impl AnthropicProvider {
-    pub fn new(model: Option<String>, temperature: Option<f32>) -> Result<Self> {
+    pub fn new(model: Option<String>, temperature: Option<f32>, event_bus: Option<Arc<EventBus>>, cost_per_1m_input_tokens: f32, cost_per_1m_output_tokens: f32) -> Result<Self> {
         let api_key = env::var("ANTHROPIC_API_KEY")
             .context("ANTHROPIC_API_KEY environment variable not set")?;
 
@@ -67,6 +72,9 @@ impl AnthropicProvider {
             client: Client::new(),
             max_tokens: 8192,
             temperature: temperature.unwrap_or(0.2),
+            event_bus,
+            cost_per_1m_input_tokens,
+            cost_per_1m_output_tokens,
         })
     }
 
@@ -77,7 +85,7 @@ impl AnthropicProvider {
     }
 
     #[allow(dead_code)]
-    pub fn with_config(api_key: String, model: String, max_tokens: usize) -> Self {
+    pub fn with_config(api_key: String, model: String, max_tokens: usize, event_bus: Option<Arc<EventBus>>, cost_per_1m_input_tokens: f32, cost_per_1m_output_tokens: f32) -> Self {
         Self {
             api_key,
             model,
@@ -85,6 +93,9 @@ impl AnthropicProvider {
             client: Client::new(),
             max_tokens,
             temperature: 0.7,
+            event_bus,
+            cost_per_1m_input_tokens,
+            cost_per_1m_output_tokens,
         }
     }
 
@@ -115,6 +126,10 @@ impl LLMProvider for AnthropicProvider {
 
     fn model_name(&self) -> &str {
         &self.model
+    }
+
+    fn handles_own_metrics(&self) -> bool {
+        true
     }
 
     async fn send_prompt(&self, prompt: &str) -> Result<String> {
@@ -165,11 +180,37 @@ impl LLMProvider for AnthropicProvider {
         }
 
         // Extract text from the first content block
-        api_response
+        let text = api_response
             .content
             .into_iter()
             .find(|c| c.content_type == "text")
             .map(|c| c.text)
-            .ok_or_else(|| anyhow!("No text content in Anthropic response"))
+            .ok_or_else(|| anyhow!("No text content in Anthropic response"))?;
+
+        // Log and calculate cost based on actual token counts if available
+        if let Some(usage) = &api_response.usage {
+            info!(
+                "Anthropic token usage - Input: {}, Output: {}, Total: {}",
+                usage.input_tokens,
+                usage.output_tokens,
+                usage.input_tokens + usage.output_tokens
+            );
+
+            // Calculate cost using configured pricing
+            let input_cost = (usage.input_tokens as f32 * self.cost_per_1m_input_tokens) / 1_000_000.0;
+            let output_cost = (usage.output_tokens as f32 * self.cost_per_1m_output_tokens) / 1_000_000.0;
+            let total_cost = input_cost + output_cost;
+
+            // Emit APICallCompleted event with accurate token counts and cost
+            if let Some(event_bus) = &self.event_bus {
+                let _ = event_bus.emit(Event::APICallCompleted {
+                    provider: "anthropic".to_string(),
+                    tokens: usage.input_tokens + usage.output_tokens,
+                    cost: total_cost,
+                }).await;
+            }
+        }
+
+        Ok(text)
     }
 }

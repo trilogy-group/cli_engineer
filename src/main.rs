@@ -542,7 +542,10 @@ async fn setup_managers(
             ) {
                 Ok(provider) => {
                     info!("OpenAI provider initialized successfully");
-                    providers.push(Box::new(provider));
+                    providers.push(Box::new(provider
+                        .with_event_bus(event_bus.clone())
+                        .with_cost_per_1m_input_tokens(openai_config.cost_per_1m_input_tokens.unwrap_or(0.0))
+                        .with_cost_per_1m_output_tokens(openai_config.cost_per_1m_output_tokens.unwrap_or(0.0))));
                 }
                 Err(e) => {
                     warn!("Failed to initialize OpenAI provider: {}. Skipping.", e);
@@ -556,6 +559,9 @@ async fn setup_managers(
             match AnthropicProvider::new(
                 Some(anthropic_config.model.clone()),
                 anthropic_config.temperature,
+                Some(event_bus.clone()),
+                anthropic_config.cost_per_1m_input_tokens.unwrap_or(0.0),
+                anthropic_config.cost_per_1m_output_tokens.unwrap_or(0.0),
             ) {
                 Ok(provider) => {
                     info!("Anthropic provider initialized successfully");

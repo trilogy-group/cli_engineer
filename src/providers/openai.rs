@@ -2,9 +2,11 @@ use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::env;
+use std::sync::Arc;
 use log::{info, warn};
 
 use crate::llm_manager::LLMProvider;
+use crate::event_bus::{Event, EventBus};
 
 /// OpenAI API provider implementation
 pub struct OpenAIProvider {
@@ -13,6 +15,9 @@ pub struct OpenAIProvider {
     base_url: String,
     max_tokens: usize,
     temperature: f32,
+    event_bus: Option<Arc<EventBus>>,
+    cost_per_1m_input_tokens: f32,
+    cost_per_1m_output_tokens: f32,
 }
 
 #[derive(Debug, Serialize)]
@@ -76,6 +81,9 @@ impl OpenAIProvider {
             base_url: "https://api.openai.com/v1".to_string(),
             max_tokens: 8192,
             temperature: temperature.unwrap_or(0.2),
+            event_bus: None,
+            cost_per_1m_input_tokens: 0.0,
+            cost_per_1m_output_tokens: 0.0,
         })
     }
 
@@ -88,6 +96,9 @@ impl OpenAIProvider {
             base_url: "https://api.openai.com/v1".to_string(),
             max_tokens,
             temperature: 1.0, // Use default temperature of 1.0 for OpenAI models
+            event_bus: None,
+            cost_per_1m_input_tokens: 0.0,
+            cost_per_1m_output_tokens: 0.0,
         }
     }
 
@@ -102,6 +113,27 @@ impl OpenAIProvider {
     #[allow(dead_code)]
     pub fn with_temperature(mut self, temperature: f32) -> Self {
         self.temperature = temperature;
+        self
+    }
+
+    /// Set event bus for event handling
+    #[allow(dead_code)]
+    pub fn with_event_bus(mut self, event_bus: Arc<EventBus>) -> Self {
+        self.event_bus = Some(event_bus);
+        self
+    }
+
+    /// Set cost per 1 million input tokens
+    #[allow(dead_code)]
+    pub fn with_cost_per_1m_input_tokens(mut self, cost: f32) -> Self {
+        self.cost_per_1m_input_tokens = cost;
+        self
+    }
+
+    /// Set cost per 1 million output tokens
+    #[allow(dead_code)]
+    pub fn with_cost_per_1m_output_tokens(mut self, cost: f32) -> Self {
+        self.cost_per_1m_output_tokens = cost;
         self
     }
 }
@@ -124,6 +156,10 @@ impl LLMProvider for OpenAIProvider {
 
     fn model_name(&self) -> &str {
         &self.model
+    }
+
+    fn handles_own_metrics(&self) -> bool {
+        true
     }
 
     async fn send_prompt(&self, prompt: &str) -> Result<String> {
@@ -223,6 +259,20 @@ impl LLMProvider for OpenAIProvider {
                 usage.completion_tokens,
                 usage.total_tokens
             );
+
+            // Calculate cost using configured pricing
+            let input_cost = (usage.prompt_tokens as f32 * self.cost_per_1m_input_tokens) / 1_000_000.0;
+            let output_cost = (usage.completion_tokens as f32 * self.cost_per_1m_output_tokens) / 1_000_000.0;
+            let total_cost = input_cost + output_cost;
+
+            // Emit APICallCompleted event with accurate token counts and cost
+            if let Some(event_bus) = &self.event_bus {
+                let _ = event_bus.emit(Event::APICallCompleted {
+                    provider: "openai".to_string(),
+                    tokens: usage.total_tokens,
+                    cost: total_cost,
+                }).await;
+            }
         }
 
         Ok(content)
