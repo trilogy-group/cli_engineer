@@ -90,10 +90,13 @@ cargo test
 
 ## Features
 
-- 🤖 **Multiple LLM Providers**: OpenAI, Anthropic, OpenRouter support
-- 📊 **Dashboard UI (Default)**: Real-time metrics and progress tracking 
-- 📝 **File Logging**: Automatic session logging with verbose mode (`cli_engineer_YYYYMMDD_HHMMSS.log`)
-- 🔄 **Agentic Loop**: Iterative planning, execution, and review
+- 🤖 **4 LLM Providers**: OpenAI (Responses API), Anthropic (Claude 4), Google Gemini, Ollama (local)
+- 🧠 **Real-Time Thinking**: Live reasoning traces from Claude 4, Gemini, and local models; reasoning summaries from o1/o3/o4-mini
+- 📊 **Dashboard UI (Default)**: Interactive interface with streaming thoughts and cost tracking
+- 📝 **Smart Buffering**: Intelligent chunking at sentence boundaries for smooth reasoning display
+- 💰 **Accurate Costs**: Real-time token usage and cost calculation from streaming events
+- 🔄 **Agentic Loop**: Iterative planning, execution, and review with transparent reasoning
+- 🔒 **Local Option**: Ollama support for privacy-focused, offline LLM inference (no API keys)
 - 📁 **Smart Artifacts**: Context-aware file generation with proper restrictions
 - 🔒 **Command-Specific Behavior**: Different file permissions and outputs per command type
 - 📖 **Comprehensive Documentation**: Auto-generated docs with examples and API references

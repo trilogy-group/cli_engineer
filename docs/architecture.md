@@ -49,23 +49,28 @@ Manages communication with Large Language Models and abstracts provider differen
 ```rust
 pub struct LLMManager {
     providers: Vec<Box<dyn LLMProvider>>,
-    event_bus: Option<Arc<EventBus>>,
-    config: Option<Arc<Config>>,
+    event_bus: Arc<EventBus>,
+    metrics: LLMMetrics,
 }
 ```
 
-**Responsibilities:**
-- Route requests to active LLM providers
-- Handle API rate limiting and retries
-- Calculate token usage and costs
-- Emit API call metrics
-
 **Supported Providers:**
-- OpenAI (GPT-4, GPT-4 Turbo, etc.)
-- Anthropic (Claude models)
-- OpenRouter (Various models)
-- Ollama (Local LLM inference)
-- Local Provider (fallback for testing)
+- **OpenAI**: Responses API for o1/o3/o4-mini reasoning models with post-completion summaries
+- **Anthropic**: Claude 4 with extended thinking and real-time streaming delta events  
+- **Google Gemini**: Native API with real-time streaming thought support
+- **Ollama**: Local inference with real-time reasoning (deepseek-r1, qwen3)
+
+**Streaming Architecture:**
+- **Real-time reasoning traces**: Live thinking output during model reasoning
+- **Intelligent buffering**: Accumulate content and emit chunks at sentence boundaries
+- **Event-driven cost tracking**: Accurate token usage from streaming events
+- **Smooth UX**: No ellipsis interruptions, clean reasoning display
+
+**Key Methods:**
+- `send_prompt()`: Primary interface for LLM communication with streaming support
+- `get_available_providers()`: Lists configured and enabled providers
+- `calculate_costs()`: Accurate cost calculation from real token usage
+- `emit_reasoning_trace()`: Real-time reasoning event emission
 
 ### 3. Task Interpreter (`interpreter.rs`)
 

@@ -57,28 +57,34 @@ CLI Engineer uses a TOML configuration file to manage settings. The tool looks f
 
 ### API Key Setup
 
-Set up environment variables for your chosen LLM provider:
+Choose one or more LLM providers based on your needs:
+
+| Provider | Cost | Speed | Reasoning | Local | Setup Required |
+|----------|------|-------|-----------|-------|----------------|
+| **Ollama** | FREE | ⚡ Fast | ✅ Yes | 🔒 Local | Install only |
+| **OpenAI** | $$$ | ⚡ Fast | 🧠 Advanced | ❌ Cloud | API Key |
+| **Anthropic** | $$$ | ⚡ Fast | 🧠 Advanced | ❌ Cloud | API Key |
+| **Gemini** | $$ | ⚡ Fast | 🧠 Advanced | ❌ Cloud | API Key |
+
+#### Cloud Providers (API Keys Required)
 
 ```bash
-# For OpenAI
+# For OpenAI (o3/o4-mini reasoning models)
 export OPENAI_API_KEY="your-api-key-here"
 
-# For Anthropic
+# For Anthropic (Claude 4 with extended thinking)
 export ANTHROPIC_API_KEY="your-api-key-here"
 
-# For OpenRouter
-export OPENROUTER_API_KEY="your-api-key-here"
+# For Google Gemini (streaming thoughts support)
+export GEMINI_API_KEY="your-api-key-here"
 
-# For Ollama (local inference - no API key needed)
-# Just install and run: curl -fsSL https://ollama.ai/install.sh | sh
-# Then pull a model: ollama pull llama3.2
+# For OpenRouter (alternative access)
+export OPENROUTER_API_KEY="your-api-key-here"
 ```
 
-Add these to your shell profile (`.bashrc`, `.zshrc`, etc.) to persist them.
+#### Local Provider (No API Keys)
 
-### Setting up Ollama (Local LLM)
-
-Ollama allows you to run LLMs locally without API keys or internet connectivity:
+**Ollama** - Best for privacy, cost savings, and offline work:
 
 1. **Install Ollama**:
    ```bash
@@ -170,6 +176,33 @@ cli_engineer [OPTIONS] <COMMAND> [PROMPT...]
 - `-c, --config <FILE>`: Specify custom configuration file path
 
 ## Command Types
+
+### Real-Time Thinking Output
+
+CLI Engineer now displays **live reasoning traces** from advanced models, showing how the AI thinks through problems step-by-step:
+
+**Models with Thinking Support:**
+- **OpenAI**: o3, o4-mini (reasoning summaries after completion)
+- **Anthropic**: Claude 4 (real-time extended thinking) 
+- **Gemini**: 2.5-pro-preview (real-time streaming thoughts)
+- **Ollama**: deepseek-r1, qwen3 (real-time local reasoning)
+
+**Example Output:**
+```
+🤔 I need to create a full-stack Next.js app with photo upload
+Let me break this down into components:
+1. Frontend upload interface with drag-and-drop
+2. API endpoint to handle multipart form data
+3. Integration with vision LLM for captioning
+4. Database to store image metadata and captions
+✨
+```
+
+**Features:**
+- ✅ **Real-time display** - See thinking as it happens
+- ✅ **Intelligent buffering** - Smooth chunks, no stuttering  
+- ✅ **Clean formatting** - No artificial ellipsis interruptions
+- ✅ **Accurate costs** - Token usage tracked from streaming events
 
 ### 1. Code Generation
 

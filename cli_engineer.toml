@@ -49,7 +49,7 @@ max_tokens = 1047576
 
 # CLAUDE MODELS (requires ANTHROPIC_API_KEY):
 [ai_providers.anthropic]
-enabled = true
+enabled = false
 temperature = 1
 model = "claude-sonnet-4-0" # Claude 4 with extended thinking support
 cost_per_1m_input_tokens = 3.00
@@ -93,7 +93,7 @@ max_tokens = 1047576
 
 # GEMINI MODELS (requires GEMINI_API_KEY):
 [ai_providers.gemini]
-enabled = false
+enabled = true
 temperature = 0.2
 model = "gemini-2.5-pro-preview-06-05"
 cost_per_1m_input_tokens = 1.25
