@@ -2,6 +2,7 @@
 #
 # API keys are stored in environment variables:
 # - OPENROUTER_API_KEY for OpenRouter
+# - GEMINI_API_KEY for Gemini
 # - OPENAI_API_KEY for OpenAI
 # - ANTHROPIC_API_KEY for Anthropic
 # - Ollama runs locally and doesn't require an API key
@@ -28,12 +29,12 @@ cache_enabled = true
 
 # OPENAI MODELS (require OPENAI_API_KEY):
 [ai_providers.openai]
-enabled = true
+enabled = false
 temperature = 1
 model = "gpt-4.1" # Flagship GPT model for coding tasks
 cost_per_1m_input_tokens = 2.00
 cost_per_1m_output_tokens = 8.00
-max_tokens = 128000
+max_tokens = 1047576
 
 # model = "gpt-o4-mini" # Faster, more affordable reasoning model
 # cost_per_1m_input_tokens = 1.10
@@ -87,21 +88,21 @@ temperature = 1
 model = "google/gemini-2.5-pro-preview" # First-place positioning on the LMArena leaderboard
 cost_per_1m_input_tokens = 1.25
 cost_per_1m_output_tokens = 10.00
-max_tokens = 8192
+max_tokens = 1047576
 
 # GEMINI MODELS (requires GEMINI_API_KEY):
 [ai_providers.gemini]
-enabled = false
+enabled = true
 temperature = 0.2
 model = "gemini-2.5-pro-preview-06-05"
 cost_per_1m_input_tokens = 1.25
 cost_per_1m_output_tokens = 10.00
-max_tokens = 8192
+max_tokens = 1047576
 
 # model = "models/gemini-2.5-flash-preview-05-20"
 # cost_per_1m_input_tokens = 0.25
 # cost_per_1m_output_tokens = 2.00
-# max_tokens = 8192
+# max_tokens = 1047576
 
 
 # Ollama - Local LLM inference (no API key required)

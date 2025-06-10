@@ -1,8 +1,8 @@
-use log::LevelFilter;
-use simplelog::{SimpleLogger, Config};
 use std::fs::OpenOptions;
 use std::io::Write;
 use chrono::Utc;
+use log::{LevelFilter, info};
+use simplelog::{SimpleLogger, Config};
 
 pub fn init(verbose: bool) {
     let level = if verbose {
@@ -34,6 +34,6 @@ pub fn init_with_file_logging(verbose: bool) {
         .open(&log_filename)
     {
         let _ = writeln!(file, "\n=== CLI Engineer Session Started: {} ===", Utc::now().format("%Y-%m-%d %H:%M:%S UTC"));
-        log::info!("Verbose logging enabled. Session details will be logged to: {}", log_filename);
+        info!("Verbose logging enabled. Session details will be logged to: {}", log_filename);
     }
 }

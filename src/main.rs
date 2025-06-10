@@ -519,6 +519,9 @@ async fn setup_managers(
             match GeminiProvider::new(
                 Some(gemini_config.model.clone()),
                 gemini_config.temperature,
+                gemini_config.cost_per_1m_input_tokens,
+                gemini_config.cost_per_1m_output_tokens,
+                Some(event_bus.clone()),
             ) {
                 Ok(provider) => {
                     info!("Gemini provider initialized successfully");

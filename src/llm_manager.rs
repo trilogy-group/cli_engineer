@@ -22,6 +22,12 @@ pub trait LLMProvider: Send + Sync {
     fn model_name(&self) -> &str {
         "Unknown"
     }
+
+    /// Whether this provider handles its own metrics and cost tracking.
+    /// If true, LLMManager will not emit duplicate APICallCompleted events.
+    fn handles_own_metrics(&self) -> bool {
+        false
+    }
 }
 
 /// Dummy provider used when no remote LLM is available.
@@ -58,6 +64,10 @@ impl LLMProvider for LocalProvider {
         } else {
             Ok(prompt.to_string())
         }
+    }
+
+    fn handles_own_metrics(&self) -> bool {
+        false
     }
 }
 
@@ -122,21 +132,23 @@ impl LLMManager {
         if let Some(bus) = &self.event_bus {
             match &result {
                 Ok(response) => {
-                    // Calculate approximate token counts (rough estimate: 1 token ≈ 4 characters)
-                    let input_tokens = prompt.len() / 4;
-                    let output_tokens = response.len() / 4;
-                    let total_tokens = input_tokens + output_tokens;
+                    if !provider.handles_own_metrics() {
+                        // Calculate approximate token counts (rough estimate: 1 token ≈ 4 characters)
+                        let input_tokens = prompt.len() / 4;
+                        let output_tokens = response.len() / 4;
+                        let total_tokens = input_tokens + output_tokens;
 
-                    // Calculate cost based on model configuration
-                    let cost = self.calculate_cost(provider.name(), input_tokens, output_tokens);
+                        // Calculate cost based on model configuration
+                        let cost = self.calculate_cost(provider.name(), input_tokens, output_tokens);
 
-                    let _ = bus
-                        .emit(Event::APICallCompleted {
-                            provider: provider.name().to_string(),
-                            tokens: total_tokens,
-                            cost,
-                        })
-                        .await;
+                        let _ = bus
+                            .emit(Event::APICallCompleted {
+                                provider: provider.name().to_string(),
+                                tokens: total_tokens,
+                                cost,
+                            })
+                            .await;
+                    }
                 }
                 Err(e) => {
                     let _ = bus
