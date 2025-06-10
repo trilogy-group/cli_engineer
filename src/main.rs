@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
-use log::{error, info, warn};
+use log::{error, info, warn, debug};
 use std::sync::{Arc, Mutex};
 use tokio::sync::oneshot;
 use tokio::time::Duration;
@@ -535,7 +535,9 @@ async fn setup_managers(
     }
 
     if let Some(openai_config) = &config.ai_providers.openai {
+        debug!("Found OpenAI config: enabled={}, model={}", openai_config.enabled, openai_config.model);
         if openai_config.enabled {
+            debug!("OpenAI provider is enabled, initializing...");
             match OpenAIProvider::new(
                 Some(openai_config.model.clone()),
                 openai_config.temperature,
@@ -551,27 +553,37 @@ async fn setup_managers(
                     warn!("Failed to initialize OpenAI provider: {}. Skipping.", e);
                 }
             }
+        } else {
+            debug!("OpenAI provider is disabled in config");
         }
+    } else {
+        debug!("No OpenAI config found");
     }
 
     if let Some(anthropic_config) = &config.ai_providers.anthropic {
+        debug!("Found Anthropic config: enabled={}, model={}", anthropic_config.enabled, anthropic_config.model);
         if anthropic_config.enabled {
-            match AnthropicProvider::new(
-                Some(anthropic_config.model.clone()),
-                anthropic_config.temperature,
-                Some(event_bus.clone()),
-                anthropic_config.cost_per_1m_input_tokens.unwrap_or(0.0),
-                anthropic_config.cost_per_1m_output_tokens.unwrap_or(0.0),
-            ) {
-                Ok(provider) => {
-                    info!("Anthropic provider initialized successfully");
-                    providers.push(Box::new(provider));
-                }
-                Err(e) => {
-                    warn!("Failed to initialize Anthropic provider: {}. Skipping.", e);
-                }
+            debug!("Anthropic provider is enabled, checking API key...");
+            if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
+                debug!("API key found, initializing Anthropic provider");
+                let provider = AnthropicProvider::new(
+                    api_key,
+                    anthropic_config.model.clone(),
+                    anthropic_config.temperature.unwrap_or(0.7),
+                    anthropic_config.cost_per_1m_input_tokens.unwrap_or(3.0),
+                    anthropic_config.cost_per_1m_output_tokens.unwrap_or(15.0),
+                    Some(event_bus.clone()),
+                );
+                info!("Anthropic provider initialized successfully");
+                providers.push(Box::new(provider));
+            } else {
+                warn!("ANTHROPIC_API_KEY environment variable not set. Skipping Anthropic provider.");
             }
+        } else {
+            debug!("Anthropic provider is disabled in config");
         }
+    } else {
+        debug!("No Anthropic config found");
     }
 
     if let Some(ollama_config) = &config.ai_providers.ollama {

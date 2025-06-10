@@ -27,6 +27,7 @@ path = "src/main.rs"
 
 [dependencies]
 tokio = { version = "1.36", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec", "io"] }
 thiserror = "1.0"
 log = "0.4"
 simplelog = "0.12"

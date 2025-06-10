@@ -29,18 +29,18 @@ cache_enabled = true
 
 # OPENAI MODELS (require OPENAI_API_KEY):
 [ai_providers.openai]
-enabled = true
+enabled = false
 temperature = 1
 
-# model = "gpt-4.1" # Flagship GPT model for coding tasks
-# cost_per_1m_input_tokens = 2.00
-# cost_per_1m_output_tokens = 8.00
-# max_tokens = 1047576
+model = "gpt-4.1" # Flagship GPT model for coding tasks
+cost_per_1m_input_tokens = 2.00
+cost_per_1m_output_tokens = 8.00
+max_tokens = 1047576
 
-model = "o4-mini" # Faster, more affordable reasoning model
-cost_per_1m_input_tokens = 1.10
-cost_per_1m_output_tokens = 4.40
-max_tokens = 128000
+# model = "o4-mini" # Faster, more affordable reasoning model
+# cost_per_1m_input_tokens = 1.10
+# cost_per_1m_output_tokens = 4.40
+# max_tokens = 128000
 
 # model = "o3" # Most powerful reasoning model
 # cost_per_1m_input_tokens = 10.00
@@ -49,9 +49,9 @@ max_tokens = 128000
 
 # CLAUDE MODELS (requires ANTHROPIC_API_KEY):
 [ai_providers.anthropic]
-enabled = false
-temperature = 0.7
-model = "claude-sonnet-4-0" # Highly capable model
+enabled = true
+temperature = 1
+model = "claude-sonnet-4-0" # Claude 4 with extended thinking support
 cost_per_1m_input_tokens = 3.00
 cost_per_1m_output_tokens = 15.00
 max_tokens = 200000

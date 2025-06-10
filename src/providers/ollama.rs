@@ -176,7 +176,7 @@ impl LLMProvider for OllamaProvider {
                                 let cleaned_new = new_content.trim().to_string();
                                 if !cleaned_new.is_empty() {
                                     let trace_to_send = if sent_thinking_length == 0 {
-                                        format!("🤔 {} ...", cleaned_new)
+                                        format!("🤔 {}", cleaned_new)
                                     } else {
                                         cleaned_new
                                     };
@@ -216,7 +216,7 @@ impl LLMProvider for OllamaProvider {
             if !cleaned_new.is_empty() {
                 if let Some(bus) = &self.event_bus {
                     let trace_to_send = if sent_thinking_length == 0 {
-                        format!("🤔 {} ...", cleaned_new)
+                        format!("🤔 {}", cleaned_new)
                     } else {
                         cleaned_new
                     };
