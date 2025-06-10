@@ -29,19 +29,20 @@ cache_enabled = true
 
 # OPENAI MODELS (require OPENAI_API_KEY):
 [ai_providers.openai]
-enabled = false
+enabled = true
 temperature = 1
-model = "gpt-4.1" # Flagship GPT model for coding tasks
-cost_per_1m_input_tokens = 2.00
-cost_per_1m_output_tokens = 8.00
-max_tokens = 1047576
 
-# model = "gpt-o4-mini" # Faster, more affordable reasoning model
-# cost_per_1m_input_tokens = 1.10
-# cost_per_1m_output_tokens = 4.40
-# max_tokens = 128000
+# model = "gpt-4.1" # Flagship GPT model for coding tasks
+# cost_per_1m_input_tokens = 2.00
+# cost_per_1m_output_tokens = 8.00
+# max_tokens = 1047576
 
-# model = "gpt-o3" # Most powerful reasoning model
+model = "o4-mini" # Faster, more affordable reasoning model
+cost_per_1m_input_tokens = 1.10
+cost_per_1m_output_tokens = 4.40
+max_tokens = 128000
+
+# model = "o3" # Most powerful reasoning model
 # cost_per_1m_input_tokens = 10.00
 # cost_per_1m_output_tokens = 40.00
 # max_tokens = 128000
@@ -92,7 +93,7 @@ max_tokens = 1047576
 
 # GEMINI MODELS (requires GEMINI_API_KEY):
 [ai_providers.gemini]
-enabled = true
+enabled = false
 temperature = 0.2
 model = "gemini-2.5-pro-preview-06-05"
 cost_per_1m_input_tokens = 1.25
