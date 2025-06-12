@@ -63,11 +63,13 @@ cli_engineer --no-dashboard -v review "analyze code quality"
 
  **For comprehensive guides and detailed information, see the [docs/](./docs/) directory:**
 
-- **[User Guide](./docs/user-guide.md)** - Complete installation, configuration, and usage instructions
-- **[Architecture](./docs/architecture.md)** - Technical architecture and design decisions  
-- **[API Reference](./docs/api-reference.md)** - Detailed API documentation
-- **[Development Guide](./docs/development.md)** - Contributing and development setup
-- **[Documentation Structure](./docs/documentation-structure.md)** - Guide to the documentation organization
+- **[Documentation Home](./docs/index.md)**: Your starting point for all `cli_engineer` documentation.
+- **[Quick Start](./docs/quick_start.md)**: Get `cli_engineer` up and running in minutes.
+- **[User Guide](./docs/user_guide.md)**: Comprehensive guide to installation, configuration, and usage.
+- **[Architecture Overview](./docs/architecture.md)**: Understand the system design, core components, and agentic loop.
+- **[Command Reference](./docs/command-reference.md)**: Detailed information on all CLI commands.
+- **[LLM Providers](./docs/llm_providers.md)**: Information on supported Large Language Models.
+- **[Contributing Guide](./docs/contributing.md)**: Learn how to contribute to the `cli_engineer` project.
 
 ## Command Reference
 

@@ -1,504 +1,77 @@
-# CLI Engineer Architecture Documentation
+# CLI Engineer Architecture
 
-## Overview
+This document provides a high-level overview of the technical architecture of `cli_engineer`, an experimental autonomous CLI coding agent. The system is designed around an agentic loop that facilitates planning, execution, and review cycles to complete software engineering tasks.
 
-CLI Engineer is an autonomous coding agent built with a sophisticated agentic architecture that follows a plan-execute-review cycle. The system is designed around an event-driven architecture with pluggable components that work together to interpret user tasks, create execution plans, execute those plans, and review the results.
+## Core Philosophy
 
-### Core Architectural Principles
+The architecture is modular and event-driven, centered around a core `AgenticLoop`. Components are designed to be loosely coupled, communicating primarily through an `EventBus`. This allows for flexible UI implementations and clear separation of concerns.
 
-1. **Agentic Loop**: The heart of the system is an iterative loop that continuously refines its approach based on feedback
-2. **Event-Driven Communication**: Components communicate through a centralized event bus
-3. **Pluggable Providers**: Multiple LLM providers can be configured and swapped
-4. **Context Management**: Intelligent context compression and management for long conversations
-5. **Artifact Management**: Structured creation and management of generated files
-6. **Iterative Refinement**: The system learns from previous iterations to improve subsequent attempts
+## Key Components
 
-## System Components
+The application is composed of several key modules, each with a distinct responsibility:
 
-### 1. Agentic Loop (`agentic_loop.rs`)
+-   **`main.rs`**: The application's entry point. It handles command-line argument parsing (using `clap`), sets up the configuration, initializes the appropriate UI (`DashboardUI` or `EnhancedUI`), and kicks off the main task.
 
-The central orchestrator that implements the core AI agent workflow:
+-   **`AgenticLoop`**: The heart of the agent. It orchestrates the entire workflow by iteratively calling the Planner, Executor, and Reviewer until the task is complete or the maximum number of iterations is reached.
 
-```rust
-pub struct AgenticLoop {
-    interpreter: Interpreter,
-    planner: Planner,
-    executor: Executor,
-    reviewer: Reviewer,
-    llm_manager: Arc<LLMManager>,
-    max_iterations: usize,
-    event_bus: Arc<EventBus>,
-    // ... other fields
-}
+-   **`Interpreter`**: Takes the initial raw user input and translates it into a structured `Task` with a clear goal. This is the first step in understanding the user's intent.
+
+-   **`Planner`**: Receives a `Task` and uses an LLM to create a detailed, step-by-step `Plan`. It considers the `IterationContext` to adapt the plan based on previous results and feedback.
+
+-   **`Executor`**: Executes each `Step` in the `Plan`. For coding tasks, it constructs a specific prompt for the LLM to generate code, which is then saved as an artifact.
+
+-   **`Reviewer`**: Analyzes the results from the `Executor`. It uses an LLM to assess the quality of the generated artifacts, identify issues, and determine if the task meets its goal. Its feedback is crucial for the iterative refinement process.
+
+-   **`LLMManager`**: An abstraction layer that manages interactions with various Large Language Model (LLM) providers (OpenAI, Anthropic, Gemini, Ollama, etc.). It selects the active provider based on configuration and handles sending prompts and receiving responses.
+
+-   **`ArtifactManager`**: Manages the lifecycle of generated files (artifacts). It handles creating, updating, and storing files in the designated artifact directory.
+
+-   **`ContextManager`**: Maintains the conversational and codebase context for the LLM. It gathers relevant source files and conversation history, ensuring the LLM has the necessary information to perform its tasks. It also handles context window limits through summarization and compression.
+
+-   **`EventBus`**: A central, asynchronous, publish-subscribe system for communication between components. This decoupling allows the UI and loggers to react to events from the core logic without being directly coupled.
+
+-   **UI (`ui_dashboard.rs`, `ui_enhanced.rs`)**: Provides user-facing interfaces. The `DashboardUI` offers a real-time, in-place updating terminal dashboard, while the `EnhancedUI` provides a more traditional scrolling output with progress bars. Both listen to the `EventBus` for updates.
+
+## The Agentic Workflow
+
+The primary workflow follows a "Plan-Execute-Review" cycle managed by the `AgenticLoop`.
+
+1.  **Interpretation**: The user's prompt is passed to the `Interpreter` to define the `Task`.
+2.  **Context Gathering**: The `ContextManager` scans the current directory for relevant source code files to provide context to the LLM.
+3.  **Planning**: The `Planner` receives the `Task` and the current context, queries the LLM, and produces a `Plan` containing a sequence of `Step`s.
+4.  **Execution**: The `Executor` takes the `Plan` and executes each `Step` one by one. This usually involves prompting the LLM to generate code or other content.
+    -   Generated files are saved via the `ArtifactManager`.
+5.  **Review**: The `Reviewer` examines the results of the execution. It prompts the LLM to check for correctness, quality, and completeness.
+    -   The review produces a `ReviewResult` containing a list of issues and a quality assessment.
+6.  **Iteration**:
+    -   If the `Reviewer` determines the task is complete (`ready_to_deploy: true`), the loop terminates successfully.
+    -   If issues are found, the `IterationContext` is updated with the feedback, and the loop repeats from the **Planning** phase. The `Planner` will use the new context to create a revised plan aimed at fixing the identified issues.
+
+This cycle continues until the goal is achieved or the configured `max_iterations` limit is hit.
+
+## Architectural Diagram
+
+The following diagram illustrates the flow of control and data between the major components.
+
+```plaintext
+[User Input] -> [main] -> [Interpreter] -> [Task]
+                                             |
+                                             v
++--------------------------------------> [AgenticLoop] <--------------------------------------+
+|                                            |                                                  |
+|                                            v                                                  |
+|  +-----------------> [Planner] --(Plan)--> [Executor] --(Results)--> [Reviewer] --------------+
+|  |                       ^                      ^                          ^                  |
+|  | (IterationContext)    |                      |                          | (ReviewResult)   |
+|  |                       |                      |                          |                  |
+|  +-----------------------+----------------------|--------------------------+                  |
+|                                                 |                                             |
+|                                                 v                                             |
+|                                          [LLMManager] -> (OpenAI, Anthropic, Gemini, Ollama)   |
+|                                                 ^                                             |
+|                                                 |                                             |
++--- [ContextManager] <--- [Files] <--- [ArtifactManager] <-------------------------------------+
+       |         ^
+       |         | (Events)
+       +-----> [EventBus] <---- [UI/Logger]
 ```
-
-**Responsibilities:**
-- Coordinates the interpret → plan → execute → review cycle
-- Manages iteration context between cycles
-- Handles failure recovery and retry logic
-- Emits progress events throughout execution
-
-**Key Methods:**
-- `run()`: Main execution loop
-- `post_process_artifacts()`: Cleanup and organization of generated files
-
-### 2. LLM Manager (`llm_manager.rs`)
-
-Manages communication with Large Language Models and abstracts provider differences:
-
-```rust
-pub struct LLMManager {
-    providers: Vec<Box<dyn LLMProvider>>,
-    event_bus: Arc<EventBus>,
-    metrics: LLMMetrics,
-}
-```
-
-**Supported Providers:**
-- **OpenAI**: Responses API for o1/o3/o4-mini reasoning models with post-completion summaries
-- **Anthropic**: Claude 4 with extended thinking and real-time streaming delta events  
-- **Google Gemini**: Native API with real-time streaming thought support
-- **Ollama**: Local inference with real-time reasoning (deepseek-r1, qwen3)
-
-**Streaming Architecture:**
-- **Real-time reasoning traces**: Live thinking output during model reasoning
-- **Intelligent buffering**: Accumulate content and emit chunks at sentence boundaries
-- **Event-driven cost tracking**: Accurate token usage from streaming events
-- **Smooth UX**: No ellipsis interruptions, clean reasoning display
-
-**Key Methods:**
-- `send_prompt()`: Primary interface for LLM communication with streaming support
-- `get_available_providers()`: Lists configured and enabled providers
-- `calculate_costs()`: Accurate cost calculation from real token usage
-- `emit_reasoning_trace()`: Real-time reasoning event emission
-
-### 3. Task Interpreter (`interpreter.rs`)
-
-Converts natural language input into structured task representations:
-
-```rust
-pub struct Task {
-    pub description: String,
-    pub goal: String,
-}
-```
-
-**Responsibilities:**
-- Parse user input into actionable tasks
-- Extract intent and goals from natural language
-- Categorize task types (code, refactor, review, docs, security)
-
-### 4. Planner (`planner.rs`)
-
-Creates structured execution plans from interpreted tasks:
-
-```rust
-pub struct Plan {
-    pub goal: String,
-    pub steps: Vec<Step>,
-    pub dependencies: HashMap<String, Vec<String>>,
-    pub estimated_complexity: ComplexityLevel,
-}
-
-pub struct Step {
-    pub id: String,
-    pub description: String,
-    pub category: StepCategory,
-    pub inputs: Vec<String>,
-    pub expected_outputs: Vec<String>,
-    pub success_criteria: Vec<String>,
-    pub estimated_tokens: usize,
-}
-```
-
-**Step Categories:**
-- `Analysis`: Understanding requirements, analyzing code
-- `FileOperation`: Creating, reading, updating files
-- `CodeGeneration`: Writing new code
-- `CodeModification`: Modifying existing code
-- `Testing`: Creating tests and validation
-- `Documentation`: Writing docs or comments
-- `Research`: Looking up APIs, best practices
-- `Review`: Code review and quality checks
-
-**Complexity Levels:**
-- `Simple`: 1-3 steps, straightforward changes
-- `Medium`: 4-10 steps, moderate complexity
-- `Complex`: 10+ steps or high interdependency
-
-### 5. Executor (`executor.rs`)
-
-Executes planned steps and manages artifact creation:
-
-```rust
-pub struct Executor {
-    artifact_manager: Option<Arc<ArtifactManager>>,
-    context_manager: Option<Arc<ContextManager>>,
-    event_bus: Option<Arc<EventBus>>,
-    llm_manager: Arc<LLMManager>,
-}
-
-pub struct StepResult {
-    pub step_id: String,
-    pub success: bool,
-    pub output: String,
-    pub artifacts_created: Vec<String>,
-    pub tokens_used: usize,
-    pub error: Option<String>,
-}
-```
-
-**Responsibilities:**
-- Execute individual plan steps
-- Extract code artifacts from LLM responses
-- Manage file creation and updates
-- Handle execution errors and retries
-- Track resource usage
-
-### 6. Reviewer (`reviewer.rs`)
-
-Evaluates execution results for quality and completeness:
-
-```rust
-pub struct ReviewResult {
-    pub overall_quality: QualityLevel,
-    pub issues: Vec<Issue>,
-    pub suggestions: Vec<Suggestion>,
-    pub ready_to_deploy: bool,
-    pub summary: String,
-}
-
-pub struct Issue {
-    pub severity: IssueSeverity,
-    pub category: IssueCategory,
-    pub description: String,
-    pub location: Option<String>,
-    pub suggestion: Option<String>,
-}
-```
-
-**Quality Levels:**
-- `Excellent`: No issues, follows best practices
-- `Good`: Minor issues or improvements possible
-- `Fair`: Some issues that should be addressed
-- `Poor`: Major issues requiring rework
-
-**Issue Severities:**
-- `Critical`: Must fix before proceeding
-- `Major`: Should fix for quality
-- `Minor`: Nice to fix but not blocking
-- `Info`: Informational only
-
-### 7. Context Manager (`context.rs`)
-
-Manages conversation context and handles token limits:
-
-```rust
-pub struct ContextManager {
-    config: ContextConfig,
-    contexts: Arc<RwLock<HashMap<String, ConversationContext>>>,
-    cache: Arc<RwLock<HashMap<String, CompressedContext>>>,
-    event_bus: Option<Arc<EventBus>>,
-    llm_manager: Option<Arc<LLMManager>>,
-}
-```
-
-**Key Features:**
-- Automatic context compression when approaching token limits
-- Preservation of system messages (codebase files)
-- Intelligent summarization of conversation history
-- Context caching for performance
-
-### 8. Artifact Manager (`artifact.rs`)
-
-Manages creation and organization of generated files:
-
-```rust
-pub struct ArtifactManager {
-    artifact_dir: PathBuf,
-    artifacts: Arc<RwLock<Vec<Artifact>>>,
-    event_bus: Option<Arc<EventBus>>,
-}
-
-pub struct Artifact {
-    pub id: String,
-    pub name: String,
-    pub artifact_type: ArtifactType,
-    pub path: PathBuf,
-    pub content: Option<String>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-    pub metadata: HashMap<String, String>,
-}
-```
-
-**Artifact Types:**
-- `SourceCode`: Programming language files
-- `Configuration`: Config files (TOML, JSON, YAML)
-- `Documentation`: Markdown and text files
-- `Test`: Test files
-- `Build`: Build scripts and files
-- `Script`: Shell and automation scripts
-- `Data`: Data files
-
-### 9. Event Bus (`event_bus.rs`)
-
-Provides event-driven communication between components:
-
-```rust
-pub struct EventBus {
-    sender: broadcast::Sender<Event>,
-    metrics: Arc<RwLock<Metrics>>,
-}
-```
-
-**Event Categories:**
-- Task events (started, progress, completed, failed)
-- Artifact events (created, updated)
-- Execution events (started, progress, completed)
-- Context events (usage, compression, cleared)
-- API events (call started, completed, error)
-- System events (config loaded, ready, shutdown)
-
-### 10. Configuration (`config.rs`)
-
-Manages system configuration and provider settings:
-
-```rust
-pub struct Config {
-    pub ai_providers: AIProvidersConfig,
-    pub execution: ExecutionConfig,
-    pub ui: UIConfig,
-    pub context: ContextConfig,
-}
-```
-
-**Configuration Sections:**
-- AI Providers: Model settings, API keys, costs
-- Execution: Iteration limits, parallelism, artifacts
-- UI: Display preferences, colors, progress bars
-- Context: Token limits, compression, caching
-
-### 11. User Interface Components
-
-**Dashboard UI (`ui_dashboard.rs`):**
-- Real-time dashboard with metrics
-- Non-scrolling, compact display
-- Live progress tracking
-- Event-driven updates
-
-**Enhanced UI (`ui_enhanced.rs`):**
-- Rich terminal interface with colors
-- Progress bars and animations
-- Detailed metrics and summaries
-- Session summaries
-
-## Data Flow Architecture
-
-### 1. Initialization Flow
-
-```
-main() → Config Loading → Provider Setup → Event Bus Creation → Manager Initialization
-```
-
-1. **Configuration Loading**: Load from `cli_engineer.toml` or defaults
-2. **Provider Initialization**: Set up enabled LLM providers
-3. **Manager Setup**: Create artifact, context, and LLM managers
-4. **Event Bus**: Initialize event communication system
-5. **UI Initialization**: Start appropriate user interface
-
-### 2. Task Execution Flow
-
-```
-User Input → Interpreter → Planner → Executor → Reviewer → Decision Point
-                ↑                                                    ↓
-              Iterate ←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←← Continue?
-```
-
-**Detailed Flow:**
-
-1. **Input Processing**:
-   - User provides natural language task description
-   - Optional codebase scanning for context
-   - Context population with existing files
-
-2. **Task Interpretation**:
-   - Parse natural language into structured `Task`
-   - Extract goals and requirements
-   - Determine task category
-
-3. **Planning Phase**:
-   - Analyze task requirements
-   - Create structured execution plan
-   - Categorize steps by type
-   - Estimate complexity and resources
-
-4. **Execution Phase**:
-   - Execute each step sequentially
-   - Generate prompts based on step category
-   - Call LLM providers for step execution
-   - Extract and save artifacts
-   - Track progress and metrics
-
-5. **Review Phase**:
-   - Analyze execution results
-   - Identify issues and quality problems
-   - Generate improvement suggestions
-   - Determine if task is complete
-
-6. **Decision Point**:
-   - If ready to deploy: Complete successfully
-   - If issues found: Create new iteration context
-   - If max iterations reached: Report failure
-
-### 3. Context Management Flow
-
-```
-New Message → Token Estimation → Context Check → Compression? → Storage
-                                       ↓              ↓
-                                   Under Limit    Over Threshold
-                                       ↓              ↓
-                                   Add Message    Compress Context
-```
-
-**Context Compression Process:**
-1. Separate system messages (codebase files) from conversation
-2. Identify recent messages to preserve
-3. Summarize older messages using LLM
-4. Rebuild context with summary + recent messages
-5. Update token counts and emit events
-
-### 4. Artifact Creation Flow
-
-```
-LLM Response → Artifact Extraction → Type Detection → File Creation → Manifest Update
-```
-
-**Artifact Extraction Process:**
-1. Parse LLM response for XML artifact blocks
-2. Extract filename, type, and content
-3. Validate content and detect file type
-4. Create file in artifact directory
-5. Update artifact manifest
-6. Emit artifact creation events
-
-### 5. Event Flow
-
-```
-Component Action → Event Emission → Event Bus → Subscribers → UI Updates/Metrics
-```
-
-**Event Types and Flow:**
-- **Task Events**: Progress tracking and status updates
-- **API Events**: Usage metrics and cost tracking
-- **Artifact Events**: File creation and updates
-- **Context Events**: Memory management and compression
-- **System Events**: Configuration and lifecycle
-
-## Integration Points
-
-### 1. Provider Integration
-
-New LLM providers implement the `LLMProvider` trait:
-
-```rust
-#[async_trait]
-pub trait LLMProvider: Send + Sync {
-    fn name(&self) -> &str;
-    fn context_size(&self) -> usize;
-    async fn send_prompt(&self, prompt: &str) -> Result<String>;
-    fn model_name(&self) -> &str;
-}
-```
-
-### 2. UI Integration
-
-UI components implement the `EventEmitter` trait:
-
-```rust
-#[async_trait]
-pub trait EventEmitter {
-    fn set_event_bus(&mut self, bus: Arc<EventBus>);
-    async fn emit_event(&self, event: Event) -> Result<()>;
-}
-```
-
-### 3. Command Integration
-
-New commands are added to the `CommandKind` enum and handled in `main()`:
-
-```rust
-#[derive(ValueEnum, Debug, Clone)]
-enum CommandKind {
-    Code,     // Code generation
-    Refactor, // Refactoring
-    Review,   // Code review
-    Docs,     // Documentation
-    Security, // Security analysis
-}
-```
-
-## Performance Considerations
-
-### 1. Context Management
-
-- **Compression Strategy**: Preserve recent messages while summarizing older content
-- **Token Budgeting**: Dynamic allocation based on LLM context limits
-- **Cache Utilization**: Disk-based caching for context persistence
-
-### 2. API Optimization
-
-- **Cost Tracking**: Real-time monitoring of API usage costs
-- **Provider Selection**: Automatic failover between providers
-- **Batch Processing**: Efficient handling of multiple API calls
-
-### 3. Memory Management
-
-- **Artifact Streaming**: Large files handled with streaming I/O
-- **Context Compression**: Automatic compression when approaching limits
-- **Event Buffer Management**: Bounded channels prevent memory leaks
-
-## Security Considerations
-
-### 1. API Key Management
-
-- Environment variable storage for API keys
-- No API keys in configuration files
-- Secure transmission to providers
-
-### 2. File System Access
-
-- Sandboxed artifact directory
-- Path validation for created files
-- No arbitrary file system access
-
-### 3. Code Execution
-
-- No automatic code execution by default
-- Isolated execution environment option
-- User confirmation for potentially dangerous operations
-
-## Extensibility
-
-### 1. Adding New Providers
-
-1. Implement `LLMProvider` trait
-2. Add provider configuration to `Config`
-3. Initialize in `setup_managers()`
-4. Update documentation
-
-### 2. Adding New Step Categories
-
-1. Add variant to `StepCategory` enum
-2. Update planner categorization logic
-3. Add executor handling for new category
-4. Update reviewer criteria
-
-### 3. Adding New Commands
-
-1. Add variant to `CommandKind` enum
-2. Implement command logic in `main()`
-3. Add command-specific prompts
-4. Update CLI help text
-
-This architecture provides a robust, extensible foundation for autonomous coding agents while maintaining clear separation of concerns and enabling easy testing and maintenance.
