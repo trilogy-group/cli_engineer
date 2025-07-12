@@ -64,7 +64,7 @@ impl DashboardLogger {
                 .open(&log_filename) 
             {
                 Ok(mut file) => {
-                    let session_start = format!("=== CLI Engineer Session Started: {} UTC ===\n\n", 
+                    let session_start = format!("=== cli_engineer Session Started: {} UTC ===\n\n", 
                                                Utc::now().format("%Y-%m-%d %H:%M:%S"));
                     let _ = file.write_all(session_start.as_bytes());
                     let _ = file.flush();

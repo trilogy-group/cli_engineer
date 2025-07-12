@@ -1,5 +1,6 @@
 use crate::{
     artifact::{ArtifactManager, ArtifactType},
+    command_executor::CommandExecutor,
     config::Config,
     context::ContextManager,
     event_bus::{Event, EventBus},
@@ -9,6 +10,7 @@ use crate::{
     llm_manager::LLMManager,
     planner::{Plan, Planner},
     reviewer::{IssueSeverity, ReviewResult, Reviewer},
+    tool_manager::ToolManager,
     CommandKind,
 };
 use anyhow::Result;
@@ -28,6 +30,7 @@ pub struct AgenticLoop {
     context_manager: Option<Arc<ContextManager>>,
     config: Option<Arc<Config>>,
     command: Option<CommandKind>,
+    tool_manager: Option<Arc<ToolManager>>,
 }
 
 impl AgenticLoop {
@@ -48,6 +51,7 @@ impl AgenticLoop {
             context_manager: None,
             config: None,
             command: None,
+            tool_manager: None,
         }
     }
 
@@ -70,7 +74,17 @@ impl AgenticLoop {
     }
 
     pub fn with_config(mut self, config: Arc<Config>) -> Self {
+        // Create command executor with the config
+        let command_executor = Arc::new(CommandExecutor::new(config.clone()));
+        self.executor = self.executor.with_command_executor(command_executor);
         self.config = Some(config);
+        self
+    }
+
+    pub fn with_tool_manager(mut self, tool_manager: Arc<ToolManager>) -> Self {
+        self.tool_manager = Some(tool_manager.clone());
+        // Also pass tool_manager to executor if needed
+        self.executor = self.executor.with_tool_manager(tool_manager);
         self
     }
 
@@ -142,6 +156,15 @@ impl AgenticLoop {
 
             // Plan the task
             info!("Creating plan for task...");
+            // Emit planning phase progress
+            let base_progress = (iteration - 1) as f32 / self.max_iterations as f32;
+            let planning_progress = base_progress + 0.05 / self.max_iterations as f32;
+            let planning_step = format!("Iteration {}/{}: Planning task", iteration, self.max_iterations);
+            info!("Emitting planning progress: {} ({:.1}%)", planning_step, planning_progress * 100.0);
+            self.event_bus.emit(Event::ExecutionProgress {
+                step: planning_step,
+                progress: planning_progress,
+            }).await?;
             let plan = match self
                 .planner
                 .plan(
@@ -149,6 +172,7 @@ impl AgenticLoop {
                     &*self.llm_manager,
                     self.config.as_deref(),
                     Some(&current_context),
+                    self.tool_manager.as_deref(),
                 )
                 .await
             {
@@ -169,7 +193,16 @@ impl AgenticLoop {
 
             // Execute the plan
             info!("Executing plan...");
-            let results = match self.executor.execute(&plan, context_id).await {
+            // Emit execution phase start progress
+            let execution_progress = base_progress + 0.1 / self.max_iterations as f32;
+            let execution_step = format!("Iteration {}/{}: Executing plan ({} steps)", iteration, self.max_iterations, plan.steps.len());
+            info!("Emitting execution progress: {} ({:.1}%)", execution_step, execution_progress * 100.0);
+            self.event_bus.emit(Event::ExecutionProgress {
+                step: execution_step,
+                progress: execution_progress,
+            }).await?;
+            // Pass iteration context to executor for detailed progress tracking
+            let results = match self.executor.execute_with_progress(&plan, context_id, iteration, self.max_iterations).await {
                 Ok(r) => r,
                 Err(e) => {
                     error!("Execution failed: {}", e);
@@ -187,6 +220,45 @@ impl AgenticLoop {
                 results.len()
             );
 
+            // Store command outputs in iteration context for adaptive planning
+            for result in &results {
+                // Store all command outputs (success or failure)
+                if !result.output.is_empty() && result.output.contains("Command:") {
+                    // Extract command from output if it's a Command Execution step
+                    let command = result.output.lines()
+                        .find(|line| line.starts_with("Command:"))
+                        .map(|line| line.trim_start_matches("Command:").trim())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    
+                    let cmd_output = crate::iteration_context::CommandOutput {
+                        command: command.clone(),
+                        step_id: result.step_id.clone(),
+                        output: result.output.clone(),
+                        success: result.success,
+                        exit_code: None, // TODO: Extract from command executor
+                        timestamp: chrono::Utc::now().to_rfc3339(),
+                    };
+                    current_context.add_command_output(cmd_output);
+                    
+                    // Track failed commands for retry logic
+                    if !result.success {
+                        let failure_type = if command.contains("build") { "build" }
+                            else if command.contains("test") { "test" }
+                            else { "other" };
+                        
+                        let failed_cmd = crate::iteration_context::FailedCommand {
+                            command,
+                            step_id: result.step_id.clone(),
+                            error: result.error.clone().unwrap_or_else(|| result.output.clone()),
+                            failure_type: failure_type.to_string(),
+                            retry_count: 0,
+                        };
+                        current_context.add_failed_command(failed_cmd);
+                    }
+                }
+            }
+            
             // Update iteration context with created artifacts
             if let Some(artifact_mgr) = &self.artifact_manager {
                 let artifacts = artifact_mgr.list_artifacts().await;
@@ -230,6 +302,11 @@ impl AgenticLoop {
 
             // Review the results
             info!("Reviewing execution results...");
+            // Emit review phase progress
+            self.event_bus.emit(Event::ExecutionProgress {
+                step: format!("Iteration {}/{}: Reviewing results", iteration, self.max_iterations),
+                progress: base_progress + 0.8 / self.max_iterations as f32, // Near end of iteration
+            }).await?;
             let review = match self
                 .reviewer
                 .review(&plan, &results, &*self.llm_manager, context_id)
@@ -267,7 +344,21 @@ impl AgenticLoop {
                 successful_steps, review.summary
             );
 
-            // Check if we're done
+            // Log any failed steps for visibility, but let the reviewer decide what to do
+            let failed_steps: Vec<&StepResult> = results.iter().filter(|r| !r.success).collect();
+            if !failed_steps.is_empty() {
+                warn!(
+                    "Detected {}/{} failed steps - reviewer will assess whether to continue or stop", 
+                    failed_steps.len(), 
+                    results.len()
+                );
+                for failed_step in &failed_steps {
+                    warn!("Failed step: {} - {}", failed_step.step_id, 
+                           failed_step.error.as_ref().unwrap_or(&"Unknown error".to_string()));
+                }
+            }
+
+            // Check if we're done (reviewer makes the decision based on all results, including failures)
             if review.ready_to_deploy {
                 info!("Task completed successfully!");
 

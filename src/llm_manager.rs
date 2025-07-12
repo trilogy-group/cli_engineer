@@ -177,6 +177,7 @@ impl LLMManager {
                 "anthropic" => &config.ai_providers.anthropic,
                 "openrouter" => &config.ai_providers.openrouter,
                 "gemini" => &config.ai_providers.gemini,
+                "xai" => &config.ai_providers.xai,
                 _ => return 0.0,
             };
 

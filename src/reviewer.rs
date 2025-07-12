@@ -206,7 +206,11 @@ impl Reviewer {
             } else {
                 // Truncate very long outputs
                 let output = if result.output.len() > 1000 {
-                    format!("{}... (truncated)", &result.output[..1000])
+                    let mut truncate_at = 1000;
+                    while truncate_at > 0 && !result.output.is_char_boundary(truncate_at) {
+                        truncate_at -= 1;
+                    }
+                    format!("{}... (truncated)", &result.output[..truncate_at])
                 } else {
                     result.output.clone()
                 };

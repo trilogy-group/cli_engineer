@@ -20,6 +20,12 @@ pub struct IterationContext {
 
     /// Summary of what has been accomplished so far
     pub progress_summary: String,
+    
+    /// Command outputs from previous steps (for adaptive planning)
+    pub command_outputs: Vec<CommandOutput>,
+    
+    /// Failed commands that may need retry
+    pub failed_commands: Vec<FailedCommand>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,6 +46,45 @@ pub struct FileInfo {
     pub issues: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandOutput {
+    /// The command that was executed
+    pub command: String,
+    
+    /// The step ID this command was part of
+    pub step_id: String,
+    
+    /// The output from the command
+    pub output: String,
+    
+    /// Whether the command succeeded
+    pub success: bool,
+    
+    /// Exit code if available
+    pub exit_code: Option<i32>,
+    
+    /// When the command was executed
+    pub timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FailedCommand {
+    /// The command that failed
+    pub command: String,
+    
+    /// The step ID this command was part of
+    pub step_id: String,
+    
+    /// Error message or output
+    pub error: String,
+    
+    /// Whether this is a build failure, test failure, etc
+    pub failure_type: String,
+    
+    /// Number of times this has been retried
+    pub retry_count: usize,
+}
+
 impl IterationContext {
     pub fn new(iteration: usize) -> Self {
         Self {
@@ -48,6 +93,8 @@ impl IterationContext {
             last_review: None,
             pending_issues: Vec::new(),
             progress_summary: String::new(),
+            command_outputs: Vec::new(),
+            failed_commands: Vec::new(),
         }
     }
 
@@ -74,6 +121,34 @@ impl IterationContext {
 
     pub fn has_existing_files(&self) -> bool {
         !self.existing_files.is_empty()
+    }
+    
+    pub fn add_command_output(&mut self, output: CommandOutput) {
+        self.command_outputs.push(output);
+    }
+    
+    pub fn add_failed_command(&mut self, failed: FailedCommand) {
+        // Check if this command has already failed before
+        if let Some(existing) = self.failed_commands.iter_mut()
+            .find(|f| f.command == failed.command && f.step_id == failed.step_id) {
+            existing.retry_count += 1;
+            existing.error = failed.error; // Update with latest error
+        } else {
+            self.failed_commands.push(failed);
+        }
+    }
+    
+    pub fn has_failed_builds(&self) -> bool {
+        self.failed_commands.iter().any(|f| f.failure_type == "build")
+    }
+    
+    pub fn has_failed_tests(&self) -> bool {
+        self.failed_commands.iter().any(|f| f.failure_type == "test")
+    }
+    
+    pub fn get_recent_command_outputs(&self, limit: usize) -> Vec<&CommandOutput> {
+        let start = self.command_outputs.len().saturating_sub(limit);
+        self.command_outputs[start..].iter().collect()
     }
 }
 
@@ -116,6 +191,48 @@ impl fmt::Display for IterationContext {
         // Last review summary
         if let Some(review) = &self.last_review {
             output.push_str(&format!("\nLast review: {}\n", review.summary));
+        }
+        
+        // Failed commands that need attention
+        if !self.failed_commands.is_empty() {
+            output.push_str(&format!("\nFailed commands ({}):\n", self.failed_commands.len()));
+            for failed in &self.failed_commands {
+                output.push_str(&format!("  - {} [{}] (step: {})\n", 
+                    failed.command, failed.failure_type, failed.step_id));
+                output.push_str(&format!("    Error: {}\n", failed.error));
+                if failed.retry_count > 0 {
+                    output.push_str(&format!("    Retry count: {}\n", failed.retry_count));
+                }
+            }
+        }
+        
+        // Recent command outputs (last 5)
+        let recent_outputs = self.get_recent_command_outputs(5);
+        if !recent_outputs.is_empty() {
+            output.push_str(&format!("\nRecent command outputs ({} total):\n", 
+                self.command_outputs.len()));
+            for cmd_output in recent_outputs {
+                let status = if cmd_output.success { "✓" } else { "✗" };
+                output.push_str(&format!("  {} {} (step: {})\n", 
+                    status, cmd_output.command, cmd_output.step_id));
+                // Show first 200 chars of output for context
+                let truncated_output = if cmd_output.output.len() > 200 {
+                    format!("{}...", &cmd_output.output[..200])
+                } else {
+                    cmd_output.output.clone()
+                };
+                // Only show output if it's meaningful (not just command echo)
+                if !truncated_output.trim().is_empty() && 
+                   !truncated_output.contains("Command:") {
+                    output.push_str(&format!("    Output: {}\n", 
+                        truncated_output.lines().next().unwrap_or("").trim()));
+                }
+            }
+        }
+        
+        // Progress summary
+        if !self.progress_summary.is_empty() {
+            output.push_str(&format!("\nProgress: {}\n", self.progress_summary));
         }
 
         write!(f, "{}", output)

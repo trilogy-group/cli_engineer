@@ -1,8 +1,8 @@
 [package]
 name = "cli_engineer"
-version = "1.2.0"
+version = "2.0.0"
 edition = "2024"
-description = "An experimental autonomous CLI coding agent"
+description = "An autonomous CLI coding agent"
 license = "MIT"
 homepage = "https://cli.engineer"
 repository = "https://github.com/trilogy-group/cli_engineer"
@@ -49,3 +49,5 @@ ollama-rs = { version = "0.1.6", features = ["stream"] }
 uuid = { version = "1.11", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 walkdir = "2.4"
+regex = "1"
+once_cell = "1"

@@ -1,6 +1,7 @@
 use crate::event_bus::{Event, EventBus, EventEmitter};
 use crate::impl_event_emitter;
 use anyhow::Result;
+
 use colored::*;
 use crossterm::{
     cursor::{MoveTo, Show},
@@ -138,6 +139,13 @@ impl DashboardUI {
                         } => {
                             *context_usage.lock().unwrap() = usage_percentage;
                         }
+                        Event::ExecutionProgress { step, progress: prog } => {
+                            // Progress updated successfully
+                            *current_phase.lock().unwrap() = step;
+                            *progress.lock().unwrap() = prog;
+                            *current_status.lock().unwrap() = format!("Progress: {:.0}%", prog * 100.0);
+
+                        }
                         Event::ReasoningTrace { message } => {
                             if !message.trim().is_empty() {
                                 let mut traces = reasoning_traces.lock().unwrap();
@@ -211,7 +219,7 @@ impl DashboardUI {
         println!("{}", "╔══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗".bright_blue());
 
         // Title line with time
-        let title = "CLI Engineer";
+        let title = "cli_engineer";
         let time_str = format!("{}:{:02}", minutes, seconds);
         let padding = CONTENT_WIDTH.saturating_sub(title.len() + time_str.len() + 3);
         println!(
@@ -228,31 +236,62 @@ impl DashboardUI {
 
         // Phase and Progress
         let phase_label = "Phase: ";
-        let phase_text = if let Ok(guard) = self.current_phase.try_lock() {
+        let phase_text_raw = if let Ok(guard) = self.current_phase.try_lock() {
             guard.clone()
         } else {
             "Loading...".to_string()
         };
-        let progress_bar_str = self.render_progress_bar(60);
+        let progress_bar_str = self.render_progress_bar(40);
         let progress_bar_visible = strip_ansi_codes(&progress_bar_str);
         let progress_bar_width = progress_bar_visible.len();
 
-        // Calculate padding: distribute space before and after progress bar
-        let used_width = phase_label.len() + phase_text.len() + 1 + progress_bar_width; // 1 space after phase_text
-        let total_padding = CONTENT_WIDTH.saturating_sub(used_width);
-        let right_padding = 32; // Fixed right padding to ensure proper alignment
-        let left_padding = total_padding.saturating_sub(right_padding);
+        // Allow more generous space for phase text - only truncate if really necessary
+        let min_progress_space = progress_bar_width + 20; // Progress bar + reasonable padding
+        let max_phase_width = CONTENT_WIDTH.saturating_sub(phase_label.len() + min_progress_space + 1);
+        
+        // Only truncate if phase text is significantly longer than available space
+        let phase_text = if phase_text_raw.len() > max_phase_width && max_phase_width > 20 {
+            // Find a good truncation point - prefer after colons or spaces
+            let target_len = max_phase_width.saturating_sub(3);
+            if let Some(pos) = phase_text_raw[..target_len].rfind([' ', ':', '-']) {
+                format!("{}...", &phase_text_raw[..pos])
+            } else {
+                let truncate_at = phase_text_raw
+                    .char_indices()
+                    .nth(target_len)
+                    .map(|(i, _)| i)
+                    .unwrap_or(target_len);
+                format!("{}...", &phase_text_raw[..truncate_at])
+            }
+        } else {
+            phase_text_raw
+        };
+
+        // Strategic padding: 1 space after %, dynamic padding before progress bar
+        // Match exact Task line pattern: CONTENT_WIDTH.saturating_sub(label.len() + text.len() + 1)
+        let visible_phase_text = strip_ansi_codes(&phase_text);
+        let right_padding = 1; // Fixed: exactly 1 space after %
+        
+        // Calculate progress bar visible length dynamically based on actual percentage
+        let progress_val = if let Ok(guard) = self.progress.try_lock() { *guard } else { 0.0 };
+        let percent_str = format!("{:.0}%", progress_val * 100.0);
+        let progress_bar_visible_len = 1 + 40 + 2 + percent_str.len(); // [40chars] XX%
+        
+        // Use exact Task line pattern: CONTENT_WIDTH.saturating_sub(label.len() + text.len() + 1)
+        // But subtract space needed for progress bar and right padding
+        let base_padding = CONTENT_WIDTH.saturating_sub(phase_label.len() + visible_phase_text.len() + 1);
+        let dynamic_padding = base_padding.saturating_sub(progress_bar_visible_len + right_padding);
 
         print!(
-            "{}{}{}",
+            "{} {}{}",
             "║".bright_blue(),
             phase_label.bright_white(),
             phase_text.cyan()
         );
-        print!(" {}", " ".repeat(left_padding));
+        print!("{}", " ".repeat(dynamic_padding)); // Dynamic padding before progress bar
         print!("{}", progress_bar_str);
-        print!("{}", " ".repeat(right_padding));
-        println!("{}", " ║".bright_blue());
+        print!("{}", " ".repeat(right_padding)); // Fixed 1 space after %
+        println!("{}", "║".bright_blue());
         io::stdout().flush()?;
 
         // Current Task
@@ -419,25 +458,35 @@ impl DashboardUI {
         let log_section_lines = 15;
         for (i, log_line) in log_lines.iter().enumerate() {
             if i >= log_section_lines { break; }
-            let max_log_len = CONTENT_WIDTH.saturating_sub(1); // Leave 1 space for right border
+            
+            let max_log_len = CONTENT_WIDTH.saturating_sub(4); // More generous space before truncation
             let visible_log = strip_ansi_codes(log_line);
-            let truncated_log = if visible_log.len() > max_log_len {
-                // Use char_indices to find safe character boundaries
-                let truncate_at = visible_log
-                    .char_indices()
-                    .nth(max_log_len.saturating_sub(3))
-                    .map(|(i, _)| i)
-                    .unwrap_or(visible_log.len());
-                format!("{}...", &visible_log[..truncate_at])
+            
+            // Smart truncation - prefer breaking at word boundaries
+            let display_log = if visible_log.len() > max_log_len {
+                let target_len = max_log_len.saturating_sub(3);
+                // Try to find a good break point (space, comma, colon)
+                if let Some(pos) = visible_log[..target_len].rfind([' ', ',', ':', '(', ')']) {
+                    format!("{}...", &visible_log[..pos])
+                } else {
+                    // Fallback to character boundary truncation
+                    let truncate_at = visible_log
+                        .char_indices()
+                        .nth(target_len)
+                        .map(|(i, _)| i)
+                        .unwrap_or(target_len);
+                    format!("{}...", &visible_log[..truncate_at])
+                }
             } else {
                 log_line.clone()
             };
-            let visible_truncated = strip_ansi_codes(&truncated_log);
-            let log_padding = CONTENT_WIDTH.saturating_sub(visible_truncated.len() + 1); // +1 for the space after ║
+            
+            let visible_display = strip_ansi_codes(&display_log);
+            let log_padding = CONTENT_WIDTH.saturating_sub(visible_display.len() + 1); // +1 for the space after ║
             print!(
                 "{} {}{}",
                 "║".bright_blue(),
-                truncated_log,
+                display_log,
                 " ".repeat(log_padding)
             );
             println!("{}", "║".bright_blue());
@@ -631,6 +680,18 @@ impl DashboardUI {
                 usage_percentage, ..
             } => {
                 *self.context_usage.lock().unwrap() = usage_percentage;
+            }
+            Event::ExecutionProgress { step, progress } => {
+                // Progress updated successfully
+                match self.update_phase(&step) {
+                    Ok(_) => {}, // Phase updated successfully
+                    Err(_) => {}, // Phase update failed silently
+                }
+                match self.update_progress(progress) {
+                    Ok(_) => {}, // Progress updated successfully
+                    Err(_) => {}, // Progress update failed silently
+                }
+                self.update_status(&format!("Progress: {:.0}%", progress * 100.0))?;
             }
             Event::ReasoningTrace { message } => {
                 if !message.trim().is_empty() {

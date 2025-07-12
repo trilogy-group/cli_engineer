@@ -1,6 +1,6 @@
-# CLI Engineer Documentation
+# cli_engineer Documentation
 
-Welcome to the official documentation for **CLI Engineer**, an agentic command-line tool for software engineering automation. This documentation provides a comprehensive guide to understanding, using, and contributing to the project.
+Welcome to the official documentation for **cli_engineer**, an agentic command-line tool for software engineering automation. This documentation provides a comprehensive guide to understanding, using, and contributing to the project.
 
 ## Table of Contents
 
@@ -20,6 +20,6 @@ Welcome to the official documentation for **CLI Engineer**, an agentic command-l
 - **[UI and Logging](./ui_and_logging.md)**: Details on the dashboard UI, simple text mode, and file logging capabilities.
 
 ### Development & Project Information
-- **[Contributing Guide](./contributing.md)**: Guidelines for developers who want to contribute to the CLI Engineer project.
+- **[Contributing Guide](./contributing.md)**: Guidelines for developers who want to contribute to the cli_engineer project.
 - **[Code of Conduct](./code_of_conduct.md)**: Standards for behavior within the `cli_engineer` community.
 - **[Documentation Structure](./documentation-structure.md)**: An overview of how the documentation is organized.

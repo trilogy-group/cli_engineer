@@ -1,6 +1,6 @@
-# CLI Engineer User Guide
+# cli_engineer User Guide
 
-Welcome to the comprehensive user guide for CLI Engineer. This document provides detailed information on installation, configuration, and usage to help you get the most out of the tool.
+Welcome to the comprehensive user guide for cli_engineer. This document provides detailed information on installation, configuration, and usage to help you get the most out of the tool.
 
 ## Table of Contents
 - [Installation](#installation)
@@ -21,7 +21,7 @@ Welcome to the comprehensive user guide for CLI Engineer. This document provides
 
 ## Installation
 
-You can install CLI Engineer directly from crates.io using Cargo:
+You can install cli_engineer directly from crates.io using Cargo:
 
 ```bash
 cargo install cli_engineer
@@ -37,7 +37,7 @@ cli_engineer --help
 
 ### Configuration File
 
-CLI Engineer is configured via a `cli_engineer.toml` file. The tool searches for this file in the following locations, in order:
+cli_engineer is configured via a `cli_engineer.toml` file. The tool searches for this file in the following locations, in order:
 
 1.  A path specified with the `--config` flag.
 2.  `cli_engineer.toml` in the current directory.
@@ -61,7 +61,7 @@ Ollama runs locally and does not require an API key.
 
 ### Command Structure
 
-The basic structure for using CLI Engineer is:
+The basic structure for using cli_engineer is:
 
 ```bash
 cli_engineer [OPTIONS] <COMMAND> [PROMPT]
@@ -79,7 +79,7 @@ cli_engineer [OPTIONS] <COMMAND> [PROMPT]
 
 ### Commands
 
-CLI Engineer provides several specialized commands:
+cli_engineer provides several specialized commands:
 
 -   `code`: Generates new source code files based on your prompt. Requires a prompt.
 -   `review`: Analyzes the existing codebase for quality, bugs, and best practices. Outputs its findings to `code_review.md`. The prompt can be used to specify areas of focus.

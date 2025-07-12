@@ -1,4 +1,4 @@
-# CLI Engineer Configuration File
+# cli_engineer Configuration File
 #
 # API keys are stored in environment variables:
 # - OPENROUTER_API_KEY for OpenRouter
@@ -9,9 +9,26 @@
 
 # Execution settings
 [execution]
-max_iterations = 8
+max_iterations = 5
 
-# UI settings  
+# Code execution settings
+enable_code_execution = true
+allowed_commands = [
+    "ls", "ps", "pwd", "echo", "cat", "head", "tail", "wc", "grep", "find",
+    "which", "whereis", "mkdir", "touch", "cp", "mv", "chmod", "du", "df",
+    "free", "uptime", "date", "time",
+    "git log", "git diff", "git status", "git show",
+    "cargo build", "cargo test", "cargo run", "cargo check", "cargo update", "cargo format",
+    "python", "python3", "uv",
+    "npm", "npm test", "npm run", "yarn", "node",
+    "make", "cmake", "gcc", "clang",
+    "javac", "java", "mvn", "gradle",
+    "go", "dotnet", "php", "ruby", "bundle", "rake",
+    "docker", "docker-compose",
+    "curl", "wget", "ping"
+]
+
+# UI settings
 [ui]
 colorful = true
 progress_bars = true
@@ -86,16 +103,16 @@ temperature = 1
 # cost_per_1m_output_tokens = 0.35
 # max_tokens = 33000
 
-model = "google/gemini-2.5-pro-preview" # First-place positioning on the LMArena leaderboard
+model = "google/gemini-2.5-pro" # First-place positioning on the LMArena leaderboard
 cost_per_1m_input_tokens = 1.25
 cost_per_1m_output_tokens = 10.00
 max_tokens = 1047576
 
 # GEMINI MODELS (requires GEMINI_API_KEY):
 [ai_providers.gemini]
-enabled = true
+enabled = false
 temperature = 0.2
-model = "gemini-2.5-pro-preview-06-05"
+model = "gemini-2.5-pro"
 cost_per_1m_input_tokens = 1.25
 cost_per_1m_output_tokens = 10.00
 max_tokens = 1047576
@@ -155,8 +172,28 @@ max_tokens = 40000
 # model = "gemma3:12b"
 # max_tokens = 128000
 
+# xAI MODELS (require XAI_API_KEY):
+[ai_providers.xai]
+enabled = true
+temperature = 0.7
+
+model = "grok-4"
+cost_per_1m_input_tokens = 3.0
+cost_per_1m_output_tokens = 15.0
+max_tokens = 256000
+
+# model = "grok-2-1212"
+# cost_per_1m_input_tokens = 2.0
+# cost_per_1m_output_tokens = 10.0
+# max_tokens = 131072
+
+# model = "grok-2-vision-1212"
+# cost_per_1m_input_tokens = 2.0
+# cost_per_1m_output_tokens = 10.0
+# max_tokens = 131072
+
 # Artifact directory
-artifact_dir = "./artifacts"
+artifact_dir = "./"
 
 # Isolated execution environment
 isolated_execution = false
@@ -169,3 +206,39 @@ disable_auto_git = true
 
 # Parallel task execution
 parallel_enabled = true
+
+
+# =====================================================================
+#  MCP Servers Configuration
+# ---------------------------------------------------------------------
+#  cli_engineer can dynamically discover and call external tools via the
+#  Model-Context Protocol (MCP).  Each entry below represents either a
+#  remote HTTPS/SSE server or a local child-process (stdio) server.
+#
+#  • Use [[mcp.servers]] to add multiple servers.
+#  • Only ONE of `base_url` or `command` should be provided.
+#  • Any string of the form "${ENV_VAR}" will be replaced with the value of
+#    that environment variable at runtime, so secrets never have to live
+#    inside your config file.
+# =====================================================================
+
+[[mcp.servers]]
+name     = "Firecrawl Search and Scrape"       # friendly label
+command  = "npx"                        # executable to spawn (stdio MCP)
+args     = ["-y", "firecrawl-mcp"]      # full argument list
+
+# API key is resolved from env variable FIRECRAWL_API_KEY
+api_key  = "${FIRECRAWL_API_KEY}"
+
+# Extra env overrides passed to the child process
+[mcp.servers.env]
+FIRECRAWL_API_KEY = "${FIRECRAWL_API_KEY}"
+
+
+# [[mcp.servers]]
+# name      = "cli_engineer Docs"
+# base_url  = "https://gitmcp.io/trilogy-group/cli_engineer"  # remote server
+# # No local command necessary here
+# NOTE: This server returns HTML (web page) instead of MCP API responses.
+# It appears to be a documentation site rather than an actual MCP server.
+

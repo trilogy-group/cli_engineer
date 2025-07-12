@@ -134,7 +134,9 @@ impl ArtifactManager {
             format!("{}{}", name, extension)
         };
 
-        let path = self.artifact_dir.join(&filename);
+        // Write directly to current working directory instead of artifacts subdirectory
+        let current_dir = std::env::current_dir().context("Failed to get current directory")?;
+        let path = current_dir.join(&filename);
 
         // Create parent directories if they don't exist
         if let Some(parent) = path.parent() {
@@ -249,7 +251,9 @@ impl ArtifactManager {
             metadata: HashMap::new(),
         };
 
-        let manifest_path = self.artifact_dir.join("manifest.json");
+        // Save manifest to current working directory instead of artifacts subdirectory
+        let current_dir = std::env::current_dir().context("Failed to get current directory")?;
+        let manifest_path = current_dir.join("manifest.json");
         let json =
             serde_json::to_string_pretty(&manifest).context("Failed to serialize manifest")?;
 
@@ -261,7 +265,9 @@ impl ArtifactManager {
     /// Load manifest from disk
     #[allow(dead_code)]
     fn load_manifest(&self) -> Result<ArtifactManifest> {
-        let manifest_path = self.artifact_dir.join("manifest.json");
+        // Load manifest from current working directory instead of artifacts subdirectory
+        let current_dir = std::env::current_dir().context("Failed to get current directory")?;
+        let manifest_path = current_dir.join("manifest.json");
 
         if !manifest_path.exists() {
             return Ok(ArtifactManifest {

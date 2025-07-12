@@ -33,7 +33,7 @@ pub fn init_with_file_logging(verbose: bool) {
         .append(true)
         .open(&log_filename)
     {
-        let _ = writeln!(file, "\n=== CLI Engineer Session Started: {} ===", Utc::now().format("%Y-%m-%d %H:%M:%S UTC"));
+        let _ = writeln!(file, "\n=== cli_engineer Session Started: {} ===", Utc::now().format("%Y-%m-%d %H:%M:%S UTC"));
         info!("Verbose logging enabled. Session details will be logged to: {}", log_filename);
     }
 }

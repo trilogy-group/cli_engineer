@@ -1,6 +1,6 @@
-# Contributing to CLI Engineer
+# Contributing to cli_engineer
 
-First off, thank you for considering contributing to CLI Engineer! We welcome any help, from bug reports and feature requests to code contributions. This document provides guidelines to help you get started.
+First off, thank you for considering contributing to cli_engineer! We welcome any help, from bug reports and feature requests to code contributions. This document provides guidelines to help you get started.
 
 ## Getting Started
 

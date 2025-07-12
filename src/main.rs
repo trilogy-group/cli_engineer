@@ -14,14 +14,16 @@ use context::{ContextConfig, ContextManager};
 use event_bus::{Event, EventBus, EventEmitter};
 use llm_manager::{LLMManager, LLMProvider, LocalProvider};
 use providers::{
-    anthropic::AnthropicProvider, ollama::OllamaProvider, openai::OpenAIProvider, openrouter::OpenRouterProvider, gemini::GeminiProvider,
+    anthropic::AnthropicProvider, ollama::OllamaProvider, openai::OpenAIProvider, openrouter::OpenRouterProvider, gemini::GeminiProvider, xai::XAIProvider,
 };
 use ui_dashboard::DashboardUI;
 use ui_enhanced::EnhancedUI;
+use tool_manager::ToolManager;
 mod logger_dashboard;
 
 mod agentic_loop;
 mod artifact;
+mod command_executor;
 mod concurrency;
 mod config;
 mod context;
@@ -34,6 +36,8 @@ mod logger;
 mod planner;
 mod providers;
 mod reviewer;
+mod mcp;
+mod tool_manager;
 mod ui_dashboard;
 mod ui_enhanced;
 
@@ -54,7 +58,8 @@ enum CommandKind {
 #[derive(Parser, Debug)]
 #[command(
     name = "cli_engineer",
-    about = "Agentic CLI for software engineering automation"
+    about = "Agentic CLI for software engineering automation",
+    version = env!("CARGO_PKG_VERSION")
 )]
 struct Args {
     /// Enable verbose logging
@@ -141,7 +146,7 @@ async fn main() -> Result<()> {
         });
 
         let result = match args.command {
-            CommandKind::Code => run_with_ui(prompt.clone(), config.clone(), event_bus.clone(), false, args.command).await,
+            CommandKind::Code => run_with_ui(prompt.clone(), config.clone(), event_bus.clone(), true, args.command).await,
             CommandKind::Refactor => {
                 let p = if prompt.is_empty() {
                     "Analyze the current directory and perform recommended refactoring.".to_string()
@@ -220,7 +225,7 @@ async fn main() -> Result<()> {
         }
 
         let result = match args.command {
-            CommandKind::Code => run_with_ui(prompt.clone(), config.clone(), event_bus.clone(), false, args.command).await,
+            CommandKind::Code => run_with_ui(prompt.clone(), config.clone(), event_bus.clone(), true, args.command).await,
             CommandKind::Refactor => {
                 let p = if prompt.is_empty() {
                     "Analyze the current directory and perform recommended refactoring.".to_string()
@@ -295,7 +300,7 @@ async fn scan_and_populate_context(
     let code_extensions = vec![
         "rs", "py", "js", "ts", "java", "c", "cpp", "h", "hpp", "go", 
         "rb", "php", "swift", "kt", "scala", "sh", "bash", "yaml", "yml",
-        "json", "toml", "xml", "html", "css", "jsx", "tsx", "vue", "svelte"
+        "json", "toml", "xml", "html", "css", "jsx", "tsx", "vue", "svelte", "md"
     ];
     
     let config_files = vec![
@@ -314,7 +319,6 @@ async fn scan_and_populate_context(
             name != "target" && 
             name != "node_modules" && 
             name != "venv" &&
-            name != "artifacts" &&
             name != "dist" &&
             name != "build"
         })
@@ -391,7 +395,7 @@ async fn scan_and_populate_context(
 }
 
 async fn run_with_ui(prompt: String, config: Arc<Config>, event_bus: Arc<EventBus>, scan_codebase: bool, command: CommandKind) -> Result<()> {
-    let (llm_manager, artifact_manager, context_manager) =
+    let (llm_manager, artifact_manager, context_manager, tool_manager) =
         setup_managers(&*config, event_bus.clone()).await?;
 
     let task_id = Uuid::new_v4().to_string();
@@ -412,6 +416,7 @@ async fn run_with_ui(prompt: String, config: Arc<Config>, event_bus: Arc<EventBu
     .with_context_manager(context_manager.clone())
     .with_config(config.clone())
     .with_artifact_manager(artifact_manager.clone())
+    .with_tool_manager(tool_manager.clone())
     .with_command(command);
     info!("AgenticLoop instance created.");
     let ctx_id = context_manager
@@ -473,7 +478,7 @@ async fn run_with_ui(prompt: String, config: Arc<Config>, event_bus: Arc<EventBu
 async fn setup_managers(
     config: &Config,
     event_bus: Arc<EventBus>,
-) -> Result<(Arc<LLMManager>, Arc<ArtifactManager>, Arc<ContextManager>)> {
+) -> Result<(Arc<LLMManager>, Arc<ArtifactManager>, Arc<ContextManager>, Arc<ToolManager>)> {
     // Initialize artifact manager
     let mut artifact_manager =
         ArtifactManager::new(std::env::current_dir()?.join(&config.execution.artifact_dir))?;
@@ -529,6 +534,26 @@ async fn setup_managers(
                 }
                 Err(e) => {
                     warn!("Failed to initialize Gemini provider: {}. Skipping.", e);
+                }
+            }
+        }
+    }
+
+    if let Some(xai_config) = &config.ai_providers.xai {
+        if xai_config.enabled {
+            match XAIProvider::new(
+                Some(xai_config.model.clone()),
+                xai_config.temperature,
+            ) {
+                Ok(provider) => {
+                    info!("xAI provider initialized successfully");
+                    providers.push(Box::new(provider
+                        .with_event_bus(event_bus.clone())
+                        .with_cost_per_1m_input_tokens(xai_config.cost_per_1m_input_tokens.unwrap_or(0.0))
+                        .with_cost_per_1m_output_tokens(xai_config.cost_per_1m_output_tokens.unwrap_or(0.0))));
+                }
+                Err(e) => {
+                    warn!("Failed to initialize xAI provider: {}. Skipping.", e);
                 }
             }
         }
@@ -618,5 +643,9 @@ async fn setup_managers(
     context_manager.set_llm_manager(llm_manager.clone());
     let context_manager = Arc::new(context_manager);
 
-    Ok((llm_manager, artifact_manager, context_manager))
+    // Initialize tool manager
+    let tool_manager = Arc::new(ToolManager::from_config(config).await?);
+    info!("ToolManager initialized with {} tools", tool_manager.tool_names().len());
+
+    Ok((llm_manager, artifact_manager, context_manager, tool_manager))
 }

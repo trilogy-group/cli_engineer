@@ -1,4 +1,4 @@
-# CLI Engineer
+# cli_engineer
 
 Agentic CLI for software engineering automation. It features pluggable LLM providers, task interpretation, planning, execution, review and an agentic loop.
 
@@ -13,7 +13,7 @@ cli_engineer --help
 
 ### Basic Usage
 
-CLI Engineer provides specialized commands for different types of software engineering tasks:
+cli_engineer provides specialized commands for different types of software engineering tasks:
 
 ```bash
 # Code generation

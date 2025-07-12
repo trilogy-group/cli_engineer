@@ -1,5 +1,6 @@
 use crate::{
     config::Config, interpreter::Task, iteration_context::IterationContext, llm_manager::LLMManager,
+    tool_manager::ToolManager,
 };
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -35,6 +36,8 @@ pub enum StepCategory {
     Documentation,    // Writing docs or comments
     Research,         // Looking up APIs, best practices
     Review,           // Code review and quality checks
+    CommandExecution, // Running allowlisted shell commands
+    ToolInvocation,   // Invoking MCP (Model Context Protocol) tools
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -58,8 +61,9 @@ impl Planner {
         llm_manager: &LLMManager,
         config: Option<&Config>,
         iteration_context: Option<&IterationContext>,
+        tool_manager: Option<&ToolManager>,
     ) -> Result<Plan> {
-        let prompt = self.build_planning_prompt(task, config, iteration_context);
+        let prompt = self.build_planning_prompt(task, config, iteration_context, tool_manager);
         let response = llm_manager
             .send_prompt(&prompt)
             .await
@@ -75,6 +79,7 @@ impl Planner {
         task: &Task,
         config: Option<&Config>,
         iteration_context: Option<&IterationContext>,
+        tool_manager: Option<&ToolManager>,
     ) -> String {
         let mut prompt = format!(
             "You are an expert software architect creating a step-by-step plan.
@@ -101,6 +106,7 @@ Categories available:
 - Documentation: Create necessary documentation
 - Research: Research information or requirements
 - Review: Review existing code/documentation
+- Command Execution: Execute shell commands for compilation, testing, and analysis
 
 Provide the plan as a numbered list. Be concise and specific.",
             task.description, task.goal
@@ -110,6 +116,41 @@ Provide the plan as a numbered list. Be concise and specific.",
         if let Some(cfg) = config {
             if cfg.execution.disable_auto_git {
                 prompt.push_str("\n\nIMPORTANT: Do NOT include git repository initialization (git init) or git-related setup steps unless explicitly requested in the task description. Focus only on the core functionality requested.");
+            }
+            
+            // Add command execution capabilities if enabled
+            if cfg.execution.enable_code_execution {
+                let allowed_commands = cfg.execution.allowed_commands.iter()
+                    .map(|c| format!("   - {}", c))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                prompt.push_str(&format!(
+                    "\n\nCOMMAND EXECUTION AVAILABLE:\nYou MUST include 'Command Execution' steps in your plan for verification. This is MANDATORY, not optional.\n\nMANDATORY VERIFICATION REQUIREMENTS:\n1. ALWAYS include 'Command Execution: Run cargo build' IMMEDIATELY after:\n   - Creating or modifying Cargo.toml (to verify dependency versions exist)\n   - Creating or modifying any Rust source code\n   - Any step that changes project dependencies\n\n2. ALWAYS include 'Command Execution: Run cargo test' IMMEDIATELY after:\n   - Creating test files\n   - Modifying existing test files\n   - Any changes that might affect test behavior\n\n3. ALWAYS include 'Command Execution: Run [language] [script]' IMMEDIATELY after:\n   - Creating Python, Node.js, or other executable scripts\n   - Modifying configuration that affects runtime behavior\n\n4. SYSTEMATIC VERIFICATION PATTERN:\n   Code Change → IMMEDIATE Verification → Next Step\n   Never skip verification steps between code changes!\n\nAllowed command prefixes:\n{}\n\nMANDATORY VERIFICATION EXAMPLES:\n- Step 3: Create Cargo.toml with dependencies\n- Step 4: VERIFY → Command Execution: Run 'cargo build' to verify dependencies exist and compile\n- Step 5: Create src/main.rs with core logic\n- Step 6: VERIFY → Command Execution: Run 'cargo build' to verify code compiles\n- Step 7: Create tests/integration.rs\n- Step 8: VERIFY → Command Execution: Run 'cargo test' to verify tests pass\n\nCRITICAL: Never declare a task complete without verification steps. Verification failures must be caught during development, not after deployment!",
+                    allowed_commands
+                ));
+            }
+        }
+        
+        // Add available MCP tools if tool_manager is provided
+        if let Some(tm) = tool_manager {
+            let tools = tm.list_tools();
+            if !tools.is_empty() {
+                prompt.push_str("\n\nAVAILABLE MCP TOOLS:");
+                prompt.push_str("\nYou can include 'Tool Invocation' steps to use external tools:");
+                prompt.push_str("\n\nAvailable tools:");
+                for tool in tools {
+                    prompt.push_str(&format!("\n- {}: {}", tool.name, tool.description.as_deref().unwrap_or("No description")));
+                    if let Some(params) = &tool.parameters {
+                        prompt.push_str(&format!("\n  Parameters: {}", serde_json::to_string(params).unwrap_or_default()));
+                    }
+                }
+                prompt.push_str("\n\nExample tool invocation steps:");
+                prompt.push_str("\n- Step N: Tool Invocation: Use 'tool_name' with {input: 'value'} to perform task");
+                prompt.push_str("\n- Step N: Tool Invocation: Call 'another_tool' to analyze results");
+                prompt.push_str("\n\nTool invocations can be used for:");
+                prompt.push_str("\n- Accessing external data sources");
+                prompt.push_str("\n- Performing specialized operations");
+                prompt.push_str("\n- Integrating with external services");
             }
         }
 
@@ -128,6 +169,39 @@ Provide the plan as a numbered list. Be concise and specific.",
                 );
                 prompt.push_str("\n3. If a file needs changes, describe what needs to be modified, not recreated");
                 prompt.push_str("\n4. Only create new files if they don't already exist");
+            }
+            
+            // Add adaptive planning based on command failures
+            if ctx.has_failed_builds() || ctx.has_failed_tests() {
+                prompt.push_str("\n\n🚨 CRITICAL: Previous command executions have FAILED!");
+                
+                if ctx.has_failed_builds() {
+                    prompt.push_str("\n\nBUILD FAILURES DETECTED:");
+                    prompt.push_str("\n1. Your FIRST priority is to fix build errors");
+                    prompt.push_str("\n2. Examine the error messages in the failed commands section");
+                    prompt.push_str("\n3. Plan steps to fix dependencies, syntax errors, or configuration issues");
+                    prompt.push_str("\n4. Include 'Command Execution: Run [build command]' immediately after fixes");
+                }
+                
+                if ctx.has_failed_tests() {
+                    prompt.push_str("\n\nTEST FAILURES DETECTED:");
+                    prompt.push_str("\n1. After fixing builds, focus on fixing test failures");
+                    prompt.push_str("\n2. Review test output to understand what's failing");
+                    prompt.push_str("\n3. Plan steps to fix the failing tests or implementation");
+                    prompt.push_str("\n4. Include 'Command Execution: Run [test command]' after fixes");
+                }
+                
+                prompt.push_str("\n\nDO NOT proceed with new features until all builds and tests pass!");
+            }
+            
+            // Instructions for using command outputs
+            if !ctx.command_outputs.is_empty() {
+                prompt.push_str("\n\nCOMMAND OUTPUT CONTEXT:");
+                prompt.push_str("\nPrevious command executions have been recorded. Use their output to:");
+                prompt.push_str("\n1. Understand what errors need to be fixed");
+                prompt.push_str("\n2. Verify what has already been successfully completed");
+                prompt.push_str("\n3. Avoid repeating successful steps");
+                prompt.push_str("\n4. Focus on addressing failures and warnings");
             }
         }
 

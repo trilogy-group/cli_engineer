@@ -50,7 +50,7 @@ impl EnhancedUI {
         println!("{}", "=".repeat(80).bright_blue());
         println!(
             "{}",
-            "CLI Engineer - Autonomous Coding Agent"
+            "cli_engineer - Autonomous Coding Agent"
                 .bright_white()
                 .bold()
         );
